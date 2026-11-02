@@ -1,0 +1,20 @@
+{
+  "name": "hopscope",
+  "version": "0.1.0",
+  "description": "Map your code onto your live AWS setup: health dashboard, architecture diagram, component inventory, cost, and narrated request traces that hop from load balancer to code to database.",
+  "author": {
+    "name": "Supreeth Ravi",
+    "url": "https://supreethravi.com"
+  },
+  "keywords": [
+    "aws",
+    "ops",
+    "observability",
+    "architecture",
+    "sre",
+    "dashboard"
+  ],
+  "homepage": "https://github.com/supreeth-ravi/hopscope",
+  "repository": "https://github.com/supreeth-ravi/hopscope",
+  "license": "MIT"
+}
