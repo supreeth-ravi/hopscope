@@ -16,5 +16,6 @@
   ],
   "homepage": "https://github.com/supreeth-ravi/hopscope",
   "repository": "https://github.com/supreeth-ravi/hopscope",
-  "license": "MIT"
+  "license": "MIT",
+  "icon": ".claude-plugin/icon.png"
 }
