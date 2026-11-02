@@ -14,6 +14,20 @@ QUEUE_URL = re.compile(r"^https://sqs\.[a-z0-9-]+\.amazonaws\.com/\d{12}/[\w.-]+
 AWS_HOST = re.compile(r"^([a-z0-9][\w.-]*\.(?:rds|cache|es|aoss)\.amazonaws\.com)(?::\d{1,5})?(?:/[\w./-]*)?$", re.I)
 
 
+def mask_host(host: str) -> str:
+    """Hide the account-specific random label of an AWS endpoint, keeping its name and region:
+    app-db.k3m9q2w7z1ab.eu-west-1.rds.amazonaws.com -> app-db.xxxxxxxx.eu-west-1.rds.amazonaws.com.
+    Linking only uses the first label, so nothing is lost."""
+    if not host.endswith(".amazonaws.com"):
+        return host
+    parts = host.split(".")
+    for k in range(1, len(parts) - 3):
+        m = re.fullmatch(r"(cluster-(?:ro-|custom-)?)?([a-z0-9]{6,16})", parts[k])
+        if m and re.search(r"\d", m.group(2)) and not re.fullmatch(r"[a-z]{2,4}\d", m.group(2)):
+            parts[k] = (m.group(1) or "") + "x" * 8
+    return ".".join(parts)
+
+
 def safe_value(value: str) -> str | None:
     """A queue URL as-is, or just the hostname of a database/cache/search endpoint; None for anything else.
 
@@ -26,7 +40,7 @@ def safe_value(value: str) -> str | None:
     host_part = re.sub(r"^[a-z][a-z0-9+.-]*://", "", v, flags=re.I)  # drop scheme://
     host_part = re.sub(r"^[^@/]*@", "", host_part)  # drop user:password@
     m = AWS_HOST.match(host_part)
-    return m.group(1).lower() if m else None
+    return mask_host(m.group(1).lower()) if m else None
 
 
 def session(profile: str | None = None, region: str | None = None) -> boto3.Session:

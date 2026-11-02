@@ -13,7 +13,7 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from awsutil import env_of, family, metric_totals, paginate, safe_value, session
+from awsutil import env_of, family, mask_host, metric_totals, paginate, safe_value, session
 
 
 def collect_sqs(s: Any, cw: Any) -> list[dict]:
@@ -118,8 +118,8 @@ def collect_rds(s: Any, cw: Any, env_rx: str | None) -> list[dict]:
         name = d.get("DBClusterIdentifier") or d["DBInstanceIdentifier"]
         out.append({"n": name, "instance": d["DBInstanceIdentifier"], "engine": d["Engine"], "class": d["DBInstanceClass"], "serverless": serverless,
                     "minAcu": sv2.get("MinCapacity"), "maxAcu": sv2.get("MaxCapacity"), "acu": m.get(f"a{k}", 0), "acuPeak": m.get(f"ax{k}", 0),
-                    "cpu": m.get(f"c{k}", 0), "conns": m.get(f"n{k}", 0), "endpoint": (d.get("Endpoint") or {}).get("Address", ""),
-                    "clusterEndpoint": cl.get("Endpoint", ""), "env": env_of(name, env_rx)})
+                    "cpu": m.get(f"c{k}", 0), "conns": m.get(f"n{k}", 0), "endpoint": mask_host((d.get("Endpoint") or {}).get("Address", "")),
+                    "clusterEndpoint": mask_host(cl.get("Endpoint", "")), "env": env_of(name, env_rx)})
     return out
 
 
@@ -253,6 +253,8 @@ def main() -> None:
            "lb": safe("load balancers", collect_lb, s, cw, ecs) or [], "sqs": safe("sqs", collect_sqs, s, cw) or [],
            "lambda": safe("lambda", collect_lambda, s, cw) or [], "cost": safe("cost explorer", collect_cost, s) or []}
     out.update(safe("other services", collect_misc, s, cw) or {})
+    for x in ecs:  # target-group ARNs carry the account number; only their names are needed after linking
+        x["tgs"] = [t.split("/")[-2] if "/" in t else t for t in x["tgs"]]
     json.dump(out, open(a.out, "w"), separators=(",", ":"))
     print(f"aws inventory: {len(ecs)} ECS services, {len(out['ec2'])} EC2, {len(out['rds'])} databases, {len(out['lb'])} load balancers, "
           f"{len(out['sqs'])} queues, {len(out['lambda'])} Lambdas -> {a.out}")

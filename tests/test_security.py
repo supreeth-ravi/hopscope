@@ -13,9 +13,9 @@ from awsutil import safe_value
 
 @pytest.mark.parametrize("value, expected", [
     ("https://sqs.eu-west-1.amazonaws.com/123456789012/orders.fifo", "https://sqs.eu-west-1.amazonaws.com/123456789012/orders.fifo"),
-    ("postgres://app:s3cret@db1.abc123.eu-west-1.rds.amazonaws.com:5432/app", "db1.abc123.eu-west-1.rds.amazonaws.com"),
-    ("redis://:token@cache.xyz.ng.0001.euw1.cache.amazonaws.com:6379/0", "cache.xyz.ng.0001.euw1.cache.amazonaws.com"),
-    ("db1.abc123.eu-west-1.rds.amazonaws.com", "db1.abc123.eu-west-1.rds.amazonaws.com"),
+    ("postgres://app:s3cret@db1.abc123def456.eu-west-1.rds.amazonaws.com:5432/app", "db1.xxxxxxxx.eu-west-1.rds.amazonaws.com"),
+    ("redis://:token@cache.xyz9k2.ng.0001.euw1.cache.amazonaws.com:6379/0", "cache.xxxxxxxx.ng.0001.euw1.cache.amazonaws.com"),
+    ("db1.k3m9q2w7z1ab.eu-west-1.rds.amazonaws.com", "db1.xxxxxxxx.eu-west-1.rds.amazonaws.com"),
     ("https://sqs.eu-west-1.amazonaws.com/123456789012/q?X-Amz-Signature=abc", None),
     ("sk_live_51Habc", None),
     ("https://evil.example/?u=db.rds.amazonaws.com", None),
@@ -48,3 +48,14 @@ def test_local_server_rejects_foreign_host(tmp_path: Path) -> None:
         assert status(f"attacker.example:{port}") == 403
     finally:
         srv.shutdown()
+
+
+@pytest.mark.parametrize("host, expected", [
+    ("app.cluster-k3m9q2w7z1ab.eu-west-1.rds.amazonaws.com", "app.cluster-xxxxxxxx.eu-west-1.rds.amazonaws.com"),
+    ("app.cluster-ro-k3m9q2w7z1ab.eu-west-1.rds.amazonaws.com", "app.cluster-ro-xxxxxxxx.eu-west-1.rds.amazonaws.com"),
+    ("master.app.r4t8yq.euw1.cache.amazonaws.com", "master.app.xxxxxxxx.euw1.cache.amazonaws.com"),
+    ("example.com", "example.com"),
+])
+def test_mask_host_hides_account_ids(host: str, expected: str) -> None:
+    from awsutil import mask_host
+    assert mask_host(host) == expected
