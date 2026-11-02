@@ -1,10 +1,13 @@
 # Development
 
 ```
-.claude-plugin/          plugin and marketplace manifests, icon
+.claude-plugin/          Claude Code plugin and marketplace manifests, icon
+.codex-plugin/           Codex plugin manifest, icon
+.agents/plugins/         Codex marketplace manifest
 skills/hopscope/
-  SKILL.md               how Claude runs Hopscope
-  scripts/               collectors, code map, call flows, linker, rules, CLI (hopscope.py)
+  SKILL.md               how Claude Code or Codex runs Hopscope
+  scripts/               collectors, code map, call flows, linker, rules, CLI (hopscope.py),
+                         local Ask on Claude Code or Codex (local_agent.py)
   assets/console.html    the console page
   references/            IAM policy, hopscope.json reference
 docs/                    documentation, images, and the live demo (docs/demo)

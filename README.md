@@ -7,11 +7,12 @@
 
 **See where every request actually goes, on the AWS you really run.**
 
-Hopscope reads your AWS account and your code, links the two, and gives you one page to run ops from. Ask for any API and watch it hop from the load balancer rule, through your code, to the databases and queues it touches.
+Claude or Codex reads your AWS account and your code, links the two, and gives you one page to run ops from. Ask for any API and watch it hop from the load balancer rule, through your code, to the databases and queues it touches.
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757?style=flat-square)](https://code.claude.com/docs/en/overview)
+[![Codex plugin](https://img.shields.io/badge/Codex-plugin-111?style=flat-square)](docs/codex.md)
 [![Tests](https://img.shields.io/github/actions/workflow/status/supreeth-ravi/hopscope/test.yml?branch=main&style=flat-square&label=tests)](https://github.com/supreeth-ravi/hopscope/actions/workflows/test.yml)
-[![Version](https://img.shields.io/badge/version-0.1.0-111?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.2.0-111?style=flat-square)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111?style=flat-square)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-%E2%89%A53.10-111?style=flat-square)](https://www.python.org)
 [![AWS read-only](https://img.shields.io/badge/AWS-read--only-111?style=flat-square)](skills/hopscope/references/iam-policy.json)
@@ -97,7 +98,7 @@ Only Describe/List/Get calls. Secrets are never stored, account numbers are mask
 </tr>
 </table>
 
-Plus a **voice narrator** for traces (your browser's voices, no delay), an **analyst** that summarises the risks on any path, and **staging/production** views.
+Plus a **voice narrator** for traces (your browser's voices, no delay), an **analyst** that summarises the risks on any path (on your own Claude or Codex sign-in), and **staging/production** views.
 
 ## See it in action
 
@@ -146,7 +147,9 @@ Plus a **voice narrator** for traces (your browser's voices, no delay), an **ana
 
 ## Install
 
-You need [Claude Code](https://code.claude.com/docs/en/overview), Python 3.10+, and the AWS CLI signed in to your account (`aws login`).
+You need [Claude Code](https://code.claude.com/docs/en/overview) or [Codex](https://developers.openai.com/codex), Python 3.10+, and the AWS CLI signed in to your account (`aws login`).
+
+### Claude Code
 
 ```bash
 claude plugin marketplace add supreeth-ravi/hopscope
@@ -155,18 +158,29 @@ claude plugin install hopscope@hopscope
 
 Or inside a Claude Code session: `/plugin marketplace add supreeth-ravi/hopscope`, then `/plugin install hopscope@hopscope`.
 
+### Codex
+
+In the Codex app, open **Plugins**, choose **Add a marketplace** and enter `supreeth-ravi/hopscope`, then install **Hopscope**. Or from the command line:
+
+```bash
+codex plugin marketplace add supreeth-ravi/hopscope
+codex plugin add hopscope@hopscope
+```
+
+Start a new chat and ask for a Hopscope console, or type `$hopscope`. More in [Hopscope in Codex](docs/codex.md).
+
 ## Quick start
 
-1. Open Claude Code in the folder that holds your service repos.
+1. Open Claude Code or Codex in the folder that holds your service repos.
 2. Ask:
    > Build a Hopscope for our AWS account in eu-west-1 and these repos
-3. Claude checks your AWS sign-in, collects (1–5 minutes), resolves the obvious code ↔ service links itself, asks you about the doubtful ones, and opens the console.
+3. It checks your AWS sign-in, collects (1–5 minutes), resolves the obvious code ↔ service links itself, asks you about the doubtful ones, and opens the console.
 
-Prefer the command line? See [Getting started](docs/getting-started.md#without-claude).
+Prefer the command line? See [Getting started](docs/getting-started.md#without-an-agent).
 
 ### Things to try
 
-| Ask Claude | Ask the console |
+| Ask Claude Code or Codex | Ask the console |
 |---|---|
 | "Build a Hopscope for our account in us-east-1" | "Show me POST /account/sign-in" |
 | "Refresh Hopscope with today's numbers" | "How does an order reach the roaster?" |
@@ -186,7 +200,7 @@ flowchart LR
     rules --> page["The console<br/>published or local"]
 ```
 
-Python scripts do the collecting and linking; Claude runs them, checks the doubtful links with you, and explains the results. Details in [How it works](docs/how-it-works.md).
+Python scripts do the collecting and linking; Claude or Codex runs them, checks the doubtful links with you, and explains the results. Details in [How it works](docs/how-it-works.md).
 
 **AWS:** ECS (Fargate and EC2), EC2, Application and Network Load Balancers, API Gateway, CloudFront, RDS and Aurora, ElastiCache, OpenSearch, DynamoDB, S3, SQS, SNS, EventBridge, Lambda, Cognito, SES, ECR, Secrets Manager, Cost Explorer.<br>
 **Code:** Python (FastAPI, Flask), JavaScript and TypeScript (Express, NestJS), Go. Call sequences with conditions for Python. Uses a [floorplan](https://github.com/haydenschmitty/floorplan) map when your repo has one.
@@ -199,7 +213,7 @@ A `.hopscope/` folder with the collected data and the built page, and optionally
 
 - **Read-only AWS access.** Describe/List/Get calls, CloudWatch metrics and Cost Explorer only — the exact [IAM policy](skills/hopscope/references/iam-policy.json).
 - **No secrets stored.** Container environment values are kept only when they are a queue URL or the bare hostname of a database, cache or search endpoint; account numbers are masked.
-- **Stays on your machine** until you publish. Published pages in the Claude app are private until you share them. The local server only answers on localhost.
+- **Stays on your machine** until you publish. Published pages in the Claude app are private until you share them. The local server only answers on localhost, and its Ask endpoint only answers the console page itself.
 - No analytics or tracking.
 
 More in [Security](SECURITY.md).
@@ -210,6 +224,7 @@ More in [Security](SECURITY.md).
 |---|---|
 | [Getting started](docs/getting-started.md) | Install, first run, reviewing links, keeping it fresh, removing |
 | [Using the console](docs/using-the-console.md) | Every view, the trace player, the analyst |
+| [Hopscope in Codex](docs/codex.md) | Installing and using it in Codex |
 | [How it works](docs/how-it-works.md) | The pipeline, linking code to infrastructure, health rules |
 | [Configuration](skills/hopscope/references/hopscope-json.md) | `hopscope.json`: corrections, labels, thresholds |
 | [Troubleshooting](docs/troubleshooting.md) | Common problems and fixes |
@@ -226,19 +241,19 @@ No. Every call is a Describe, List or Get, plus CloudWatch metrics and Cost Expl
 <details>
 <summary><b>Does my data leave my computer?</b></summary>
 
-Only the way Claude Code always works: Claude reads the files it needs through your account. The collected data stays in `.hopscope/` on your machine. If you publish the console in the Claude app, the page and its data go to your private claude.ai account, and nothing is shared until you share it.
+Only the way Claude Code and Codex always work: the AI reads the files it needs through your own account. When the console runs locally, the Analyst sends the trace it is explaining to the Claude Code or Codex CLI on your sign-in. The collected data stays in `.hopscope/` on your machine. If you publish the console in the Claude app, the page and its data go to your private claude.ai account, and nothing is shared until you share it.
 </details>
 
 <details>
 <summary><b>How does it know which code runs on which service?</b></summary>
 
-It scores evidence: deployment files that name the service, name matches between services and folders, queue URLs and database endpoints in the container environment, and queue names in the code. Each link has a confidence; anything doubtful goes to `hopscope.py review`, and Claude asks you about it. Your answers live in `hopscope.json`. See [How it works](docs/how-it-works.md#link).
+It scores evidence: deployment files that name the service, name matches between services and folders, queue URLs and database endpoints in the container environment, and queue names in the code. Each link has a confidence; anything doubtful goes to `hopscope.py review`, and the agent asks you about it. Your answers live in `hopscope.json`. See [How it works](docs/how-it-works.md#link).
 </details>
 
 <details>
 <summary><b>What does it cost to run?</b></summary>
 
-A run makes a few hundred read API calls and CloudWatch metric queries, which usually costs cents, plus whatever Claude usage your plan already covers.
+A run makes a few hundred read API calls and CloudWatch metric queries, which usually costs cents, plus whatever Claude or Codex usage your plan already covers.
 </details>
 
 <details>
@@ -250,7 +265,7 @@ Not yet. Hopscope covers ECS and EC2 on AWS today. EKS, several regions in one v
 <details>
 <summary><b>Does it work with Codex?</b></summary>
 
-The scripts are agent-agnostic, but the plugin packaging and the console's AI features target Claude Code today. Codex support is next.
+Yes. Install it from the Codex plugin marketplace, ask for a Hopscope console or type `$hopscope`. The console runs locally and its Analyst uses your Codex sign-in. See [Hopscope in Codex](docs/codex.md).
 </details>
 
 ## Contributing

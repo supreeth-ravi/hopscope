@@ -25,7 +25,7 @@ The request drawn on the real infrastructure, numbered in order. Solid lines are
 - **▶ Play request** — a packet travels each hop while a narrator explains it. Choose the **voice** and **speed** in the player bar; your browser's built-in voices are used, so there's no delay.
 - **Conditional steps** say when they run, taken from the code: the developer's comment above the `if` when there is one, otherwise the condition in plain words.
 - **Sequence** — every step with its file and line.
-- **Analyst** — a built-in brief of the path and its risks. In the Claude app, **Ask Claude** writes a deeper walk-through.
+- **Analyst** — a built-in brief of the path and its risks. **Ask Claude** (or **Ask Codex**) writes a deeper walk-through: in the Claude app it uses your Claude account; served locally with `hopscope.py serve` it uses the Claude Code or Codex CLI on your own sign-in (`--engine` picks one).
 
 ## Cost
 

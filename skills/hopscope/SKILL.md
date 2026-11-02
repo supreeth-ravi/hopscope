@@ -14,6 +14,12 @@ a narrator), and **Cost** (spend by service and savings that don't touch product
 Everything is read-only. The collectors only call Describe/List/Get APIs and CloudWatch. Container
 environment values are dropped unless they are AWS endpoints or queue URLs, so no secrets are stored.
 
+**In Codex:** `<skill-dir>` below means this skill's folder, the one holding this SKILL.md. Setup,
+the AWS calls and `hopscope.py all` need the network, so run them with escalated permissions rather
+than in the sandbox. Codex has no `!` prefix, so ask the user to run `aws login` in their own terminal.
+There is no Artifact tool, so show the console with `hopscope.py serve` (step 5). In plain words, the
+user can ask for "a Hopscope console" or type `$hopscope`.
+
 ## Workflow
 
 ### 1. Set up and check access
@@ -23,8 +29,8 @@ PY=$(bash <skill-dir>/scripts/setup.sh)      # creates a small venv once (boto3)
 aws sts get-caller-identity                   # must succeed
 ```
 
-If the AWS call fails, ask the user to sign in themselves — suggest `! aws login` (or
-`! aws sso login --profile <name>`). Don't try to handle credentials yourself. The minimum permissions
+If the AWS call fails, ask the user to sign in themselves: in Claude Code suggest `! aws login` (or
+`! aws sso login --profile <name>`), in Codex ask them to run the same command in their terminal. Don't try to handle credentials yourself. The minimum permissions
 are in `references/iam-policy.json`; share it if their role lacks read access.
 
 ### 2. Ask only what you can't find
@@ -68,8 +74,16 @@ to the wrong container, so don't skip this for links the user would act on.
   `files` mapping `code.json`, `aws.json`, `flows.json`, `ts.json` and `model.json` to the files in
   `<workdir>/site/`, and declare `capabilities: {"sample": {}}` so the Analyst panel and "Ask" can
   use Claude. The page is private until the user shares it; say so.
-- **Otherwise**, run `$PY <skill-dir>/scripts/hopscope.py serve --workdir …` in the background and give
-  the user `http://127.0.0.1:8765/`.
+- **Otherwise** (Claude Code in a terminal, or Codex), run
+  `$PY <skill-dir>/scripts/hopscope.py serve --workdir …` in the background and give the user
+  `http://127.0.0.1:8765/`. The Analyst panel and "Ask" then run on this machine through the Claude
+  Code or Codex CLI, on the user's own sign-in: it uses the agent that started it, else whichever is
+  installed (`--engine claude|codex` forces one, `--model` picks the model). Each question runs with the
+  CLI's tools, shell and plugins off, in an empty folder, without AWS credentials, and isn't saved to
+  the CLI's history. If neither CLI is installed the
+  console still works, with the built-in analysis. **In Codex**, start the server outside the sandbox
+  (escalated permissions): it has to keep running after the command ends, and Ask needs the network.
+  If that isn't allowed, give the user the command to run in their own terminal.
 
 Then summarise in a few lines: the overall status, the top 3 actions with their fixes, and the
 largest savings. Point them at the Trace tab with one of the generated example questions.
@@ -99,6 +113,7 @@ routes, code paths and numbers still describe the real system. Build the demo fr
 ## Files
 
 - `scripts/hopscope.py` — entry point (`all`, `collect`, `build`, `review`, `serve`)
+- `scripts/local_agent.py` — runs the console's Ask on the Claude Code or Codex CLI when served locally
 - `scripts/aws_inventory.py`, `scripts/aws_timeseries.py` — read-only AWS collectors
 - `scripts/code_scan.py`, `scripts/call_flow.py` — code map and per-API call sequences
 - `scripts/linker.py` — code ↔ infrastructure links with confidence and evidence

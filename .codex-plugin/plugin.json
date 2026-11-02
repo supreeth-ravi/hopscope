@@ -1,0 +1,45 @@
+{
+  "name": "hopscope",
+  "version": "0.2.0",
+  "description": "Map your code onto your live AWS setup: health dashboard, architecture diagram, component inventory, cost, and narrated request traces that hop from load balancer to code to database.",
+  "author": {
+    "name": "Supreeth Ravi",
+    "url": "https://supreethravi.com"
+  },
+  "homepage": "https://github.com/supreeth-ravi/hopscope",
+  "repository": "https://github.com/supreeth-ravi/hopscope",
+  "license": "MIT",
+  "keywords": [
+    "aws",
+    "ops",
+    "observability",
+    "architecture",
+    "sre",
+    "dashboard"
+  ],
+  "skills": "./skills/",
+  "requires_local_executor": true,
+  "interface": {
+    "displayName": "Hopscope",
+    "shortDescription": "See where every request goes on your AWS",
+    "longDescription": "Codex reads your AWS account (read-only) and your code, works out which code runs on which container, and builds one console to run ops from: a health dashboard with an action queue, an architecture diagram of what is really deployed, every AWS component with its usage, cost and savings, and a trace that plays any API hop by hop from the load balancer rule through your code to the databases and queues it touches. The console's Analyst runs on your own Codex sign-in.",
+    "developerName": "Supreeth Ravi",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/supreeth-ravi/hopscope",
+    "privacyPolicyURL": "https://github.com/supreeth-ravi/hopscope/blob/main/SECURITY.md",
+    "defaultPrompt": [
+      "Build a Hopscope console for this code and my AWS account",
+      "Show me where POST /login goes on our AWS",
+      "What is broken or wasting money in our AWS?"
+    ],
+    "composerIcon": "./.codex-plugin/icon.png",
+    "logo": "./.codex-plugin/icon.png",
+    "brandColor": "#4FD1B8",
+    "screenshots": []
+  }
+}
