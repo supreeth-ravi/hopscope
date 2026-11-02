@@ -1,0 +1,24 @@
+name: test
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -r skills/hopscope/scripts/requirements.txt pytest mypy ruff
+      - run: ruff check skills/hopscope/scripts tests --select E,F,B --ignore E501
+      - run: mypy --ignore-missing-imports skills/hopscope/scripts
+      - run: pytest -q tests
+      - name: console script parses
+        run: |
+          python -c "import re;h=open('skills/hopscope/assets/console.html').read();open('/tmp/c.js','w').write(re.findall(r'<script>(.*?)</script>',h,re.S)[0])"
+          node --check /tmp/c.js
