@@ -22,6 +22,7 @@ SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "env", "__pycache__", "dis
 CODE_EXT = {".py": "python", ".js": "js", ".jsx": "js", ".ts": "js", ".tsx": "js", ".mjs": "js", ".go": "go"}
 SERVICE_MARKERS = ("Dockerfile", "pyproject.toml", "requirements.txt", "package.json", "go.mod", "setup.py")
 MAX_FILE_BYTES = 400_000
+METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "WS", "ANY"}
 
 # External systems, detected from imports and SDK calls. Keys are what the console draws.
 EXTERNAL = {
@@ -284,7 +285,8 @@ def scan(repos: list[Path]) -> CodeMap:
             routes = go_routes(src)
         cm.files.append({"p": rel(f), "m": mid, "t": humanize(f.stem), "d": "", "x": externals(src), "loc": src.count("\n") + 1})
         for r in routes:
-            cm.routes.append({**r, "f": i})
+            if r["m"] in METHODS:
+                cm.routes.append({**r, "f": i})
         cm.links += [[i, j, 0, ""] for j in links if j != i]
         st = module_stats.setdefault(mid, {"files": 0, "loc": 0, "service": sid})
         st["files"] += 1
@@ -320,7 +322,8 @@ def from_floorplan(graph_path: Path, repo: Path) -> CodeMap:
         a, b = link["a"], link["b"]
         if a.startswith("f:") and b.startswith("f:") and a[2:] in index and b[2:] in index:
             cm.links.append([index[a[2:]], index[b[2:]], {"import": 0, "http": 1, "queue": 2}[link["k"]], (link.get("labels") or [""])[0]])
-    cm.routes = [{"m": r["m"], "p": r["p"], "t": r.get("name", ""), "d": r.get("d", ""), "f": index[r["f"]], "l": r.get("l", 0)} for r in g["routes"] if r["f"] in index]
+    cm.routes = [{"m": str(r["m"]).upper(), "p": r["p"], "t": r.get("name", ""), "d": r.get("d", ""), "f": index[r["f"]], "l": r.get("l", 0)}
+                 for r in g["routes"] if r["f"] in index and str(r["m"]).upper() in METHODS]
     cm.modules = [{"id": n["id"], "parent": n["parent"], "label": n["label"], "kind": n.get("kind", ""), "summary": n.get("summary", ""),
                    "paths": n.get("paths", []), "files": n.get("stats", {}).get("files", 0), "loc": n.get("stats", {}).get("loc", 0)} for n in g["nodes"]]
     # Floorplan modules are logical; deployable services are still detected from manifests.
