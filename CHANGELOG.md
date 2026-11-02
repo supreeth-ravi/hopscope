@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0 — 2026-11-02
+
+- **Codex support.** Install from the Codex plugin marketplace (`codex plugin marketplace add supreeth-ravi/hopscope`) and ask for a Hopscope console or type `$hopscope`.
+- **Analyst and Ask in the local console.** `hopscope.py serve` answers the console's questions with the Claude Code or Codex CLI on your own sign-in: tools, shell and plugins off, an empty temporary folder, no AWS credentials, nothing saved to history. `--engine claude|codex` and `--model` choose. The endpoint answers only same-origin requests carrying a per-run token.
+
 ## 0.1.0 — 2026-11-02
 
 First release.

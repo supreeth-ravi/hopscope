@@ -334,7 +334,7 @@ td .rp { font-size: 11px }
     </div>
     <div class="grid-2">
       <div class="panel"><div class="panel-head"><h2>Sequence</h2><span class="label">request → code → infra</span></div><ol class="seq" id="steps"></ol></div>
-      <div class="panel"><div class="panel-head"><h2>Analyst</h2><span style="display:flex;gap:8px;align-items:center"><span class="label" id="ai-state">built-in</span><button class="btn ghost" id="ask-claude" type="button">Ask Claude</button></span></div><div class="narr" id="narr">Ask a question to get a plain-language walk-through of the flow, its risks and the infra it depends on.</div></div>
+      <div class="panel"><div class="panel-head"><h2>Analyst</h2><span style="display:flex;gap:8px;align-items:center"><span class="label" id="ai-state">built-in</span><button class="btn ghost" id="ask-claude" type="button">Ask AI</button></span></div><div class="narr" id="narr">Ask a question to get a plain-language walk-through of the flow, its risks and the infra it depends on.</div></div>
     </div>
   </section>
 
@@ -520,8 +520,34 @@ function candidates(q) {
   if (pathTerm) terms.push(...pathTerm.split('/').filter((w) => w.length > 2));
   return D.routes.map((r, i) => [i, score(r, terms, pathTerm)]).filter(([, s]) => s > 0).sort((a, b) => b[1] - a[1]).slice(0, 40).map(([i]) => i);
 }
+// In the Claude app the page asks Claude directly. Served by `hopscope.py serve`, the same calls go to the
+// Claude Code or Codex CLI on this machine through /api/ask, on the person's own sign-in.
+const LOCAL = window.HOPSCOPE_LOCAL || null;
+const AI = LOCAL?.engine === 'codex' ? 'Codex' : 'Claude';
+document.getElementById('ask-claude')?.replaceChildren('Ask ' + AI);
+function parseJsonText(t) {
+  const fence = /```(?:json)?\s*([\s\S]*?)```/.exec(t);
+  for (const c of [t, fence?.[1], t.slice(Math.min(...[t.indexOf('{'), t.indexOf('[')].filter((i) => i >= 0)), Math.max(t.lastIndexOf('}'), t.lastIndexOf(']')) + 1)]) {
+    try { if (c) return JSON.parse(c); } catch (e) { /* try the next shape */ }
+  }
+  throw { code: 'bad_json', message: 'the answer was not JSON' };
+}
+function localSample() {
+  if (!LOCAL?.engine) return null;
+  const call = async (input, opts = {}) => {
+    const r = await fetch('api/ask', { method: 'POST', headers: { 'content-type': 'application/json', 'x-hopscope-token': LOCAL.token }, body: JSON.stringify({ prompt: String(input) }), signal: opts.signal });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw { code: body.error?.code || 'cli_error', message: body.error?.message || 'HTTP ' + r.status };
+    opts.onText?.({ text: body.text, delta: body.text });
+    return { text: body.text, truncated: false };
+  };
+  call.json = async (input, opts) => parseJsonText((await call(input, opts)).text);
+  return call;
+}
 let sampleP = null;
-function getSample() { return (sampleP ||= (window.claude?.use ? window.claude.use('sample') : Promise.resolve(null))); }
+function getSample() {
+  return (sampleP ||= (window.claude?.use ? window.claude.use('sample').then((s) => s || localSample()) : Promise.resolve(localSample())));
+}
 let askCtl = null;
 
 async function ask(q) {
@@ -555,13 +581,13 @@ async function analyze(q, related, sample, signal) {
   if (!ARCH) return;
   const t = ARCH.t, seqNow = ARCH.S.seq;
   $('#ai-state').textContent = 'thinking…';
-  $('#narr').textContent = localBrief(t, ARCH.S) + '\n\nClaude is reading the flow…';
+  $('#narr').textContent = localBrief(t, ARCH.S) + '\n\n' + AI + ' is reading the flow…';
   try {
     const res = await sample(`You are a site reliability engineer explaining a request flow to a product leader. Question: "${q}"\nTrace computed from code and AWS:\n${describeTrace(t)}\nRelated routes in the same flow: ${related.map((i) => D.routes[i].m + ' ' + D.routes[i].p + ' (' + D.routes[i].t + ')').join('; ') || 'none'}\nWrite plain text, no markdown, under 170 words: 1) what happens, step by step, naming the AWS resources; 2) the single biggest risk on this path given the usage numbers; 3) one concrete improvement. Do not invent services not in the trace.`,
       { modelTier: 'default', signal, onText: ({ text }) => { if (text && ARCH?.S.seq === seqNow) $('#narr').textContent = text; } });
     if (ARCH?.S.seq !== seqNow) return;
     if (res?.text) $('#narr').textContent = res.text;
-    $('#ai-state').textContent = 'Claude';
+    $('#ai-state').textContent = AI;
   } catch (e) {
     if (signal.aborted || ARCH?.S.seq !== seqNow) return;
     setAnalyst('error', e);
@@ -593,7 +619,10 @@ function setAnalyst(mode, err) {
   if (!ARCH) return;
   const brief = localBrief(ARCH.t, ARCH.S);
   if (mode === 'error') {
-    const why = { not_granted: 'Claude access was declined for this page. Allow it from the page’s Permissions menu to get the deeper write-up.', rate_limited: 'Claude is busy right now. Try Ask Claude again in a minute.' }[err?.code] || `Claude did not answer (${err?.code || err?.message || 'unknown error'}).`;
+    const why = { not_granted: 'Claude access was declined for this page. Allow it from the page’s Permissions menu to get the deeper write-up.',
+      rate_limited: `${AI} is busy right now. Try Ask ${AI} again in a minute.`,
+      not_logged_in: `${AI} isn't signed in on this machine. Run \`${AI.toLowerCase()}\` in a terminal, sign in, then try again.`,
+      timeout: `${AI} took too long to answer. Try Ask ${AI} again.` }[err?.code] || `${AI} did not answer (${err?.code || err?.message || 'unknown error'}).`;
     $('#ai-state').textContent = err?.code === 'not_granted' ? 'off' : 'built-in';
     $('#narr').textContent = brief + '\n\n' + why;
   } else {
@@ -604,7 +633,7 @@ function setAnalyst(mode, err) {
 async function askClaudeNow() {
   if (!ARCH) return;
   const sample = await getSample().catch(() => null);
-  if (!sample) { setAnalyst('error', { message: 'Claude is not available in this view' }); return; }
+  if (!sample) { setAnalyst('error', { message: 'no AI is available in this view; open it in the Claude app or run hopscope.py serve with Claude Code or Codex installed' }); return; }
   askCtl?.abort(); askCtl = new AbortController();
   await analyze(`Explain ${ARCH.t.r.m} ${ARCH.t.r.p}`, [], sample, askCtl.signal);
 }
