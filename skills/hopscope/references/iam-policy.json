@@ -1,0 +1,25 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "OpsConsoleReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "sts:GetCallerIdentity",
+        "cloudwatch:GetMetricData",
+        "ce:GetCostAndUsage",
+        "ecs:ListClusters", "ecs:ListServices", "ecs:DescribeServices", "ecs:DescribeTaskDefinition",
+        "ec2:DescribeInstances", "ec2:DescribeVolumes", "ec2:DescribeInstanceCreditSpecifications", "ec2:DescribeNatGateways", "ec2:DescribeAddresses",
+        "rds:DescribeDBInstances", "rds:DescribeDBClusters",
+        "elasticloadbalancing:DescribeLoadBalancers", "elasticloadbalancing:DescribeListeners", "elasticloadbalancing:DescribeRules",
+        "elasticloadbalancing:DescribeTargetGroups", "elasticloadbalancing:DescribeTargetHealth",
+        "sqs:ListQueues", "sns:ListTopics", "lambda:ListFunctions",
+        "elasticache:DescribeCacheClusters", "es:ListDomainNames", "es:DescribeDomains",
+        "apigateway:GET", "cloudfront:ListDistributions", "cognito-idp:ListUserPools",
+        "s3:ListAllMyBuckets", "ecr:DescribeRepositories", "secretsmanager:ListSecrets",
+        "dynamodb:ListTables", "ses:ListEmailIdentities", "events:ListRules"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

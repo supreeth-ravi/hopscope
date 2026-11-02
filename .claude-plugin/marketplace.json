@@ -1,0 +1,14 @@
+{
+  "name": "hopscope",
+  "owner": {
+    "name": "Supreeth Ravi",
+    "url": "https://github.com/supreeth-ravi"
+  },
+  "plugins": [
+    {
+      "name": "hopscope",
+      "source": "./",
+      "description": "Map your code onto your live AWS setup and watch any request hop through it."
+    }
+  ]
+}
