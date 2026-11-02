@@ -1,0 +1,1380 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>body{margin:0}[hidden]{display:none!important}</style></head><body><title>Hopscope</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a mission-control console. Sticky command bar with the ask box, four views (Overview, Architecture, Trace, Cost) routed on the hash. Dark-first. */
+:root {
+  --bg: #0a1014; --panel: #10181e; --raise: #16222a; --line: #22323c; --ink: #dbe7e4; --muted: #7f9692;
+  --signal: #4fd1b8; --signal-dim: #1d4a43; --amber: #f0b45b; --amber-dim: #3d2f19; --red: #f2786b; --red-dim: #40221f;
+  --blue: #7fb2ff; --violet: #b39cff; --glow: rgba(79, 209, 184, .18); color-scheme: dark;
+  --f-display: "Chakra Petch", "IBM Plex Sans", system-ui, sans-serif; --f-body: "IBM Plex Sans", system-ui, sans-serif; --f-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  --bg: #eef2ef; --panel: #f8faf8; --raise: #ffffff; --line: #d3ddd8; --ink: #13231f; --muted: #5d716b;
+  --signal: #13806c; --signal-dim: #cfece5; --amber: #9a6207; --amber-dim: #f6e6c8; --red: #b23c30; --red-dim: #f7dcd8;
+  --blue: #2f62c0; --violet: #6747c7; --glow: rgba(19, 128, 108, .12); color-scheme: light } }
+:root[data-theme="light"] {
+  --bg: #eef2ef; --panel: #f8faf8; --raise: #ffffff; --line: #d3ddd8; --ink: #13231f; --muted: #5d716b;
+  --signal: #13806c; --signal-dim: #cfece5; --amber: #9a6207; --amber-dim: #f6e6c8; --red: #b23c30; --red-dim: #f7dcd8;
+  --blue: #2f62c0; --violet: #6747c7; --glow: rgba(19, 128, 108, .12); color-scheme: light }
+* { box-sizing: border-box }
+[hidden] { display: none !important }
+body { background: var(--bg); color: var(--ink); font: 14px/1.5 var(--f-body); min-height: 100vh;
+  background-image: radial-gradient(circle at 1px 1px, var(--line) 1px, transparent 0); background-size: 28px 28px; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 30; background: var(--panel) }
+.gutter { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)) }
+.inner { max-width: 1320px; margin: 0 auto }
+.mono { font-family: var(--f-mono); font-variant-numeric: tabular-nums }
+.label { font: 500 11px var(--f-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted) }
+h1, h2, h3 { font-family: var(--f-display); font-weight: 600; margin: 0; text-wrap: balance; letter-spacing: .02em }
+h2 { font-size: 20px } h3 { font-size: 15px }
+button { font: inherit; color: inherit }
+button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px }
+a { color: var(--signal) }
+
+/* command bar */
+.bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: color-mix(in srgb, var(--panel) 92%, transparent);
+  backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); padding-block: 10px }
+.bar .inner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 16px; align-items: center }
+.brand { display: flex; align-items: center; gap: 10px; white-space: nowrap }
+.brand-mark { width: 26px; height: 26px; border: 1.5px solid var(--signal); border-radius: 6px; display: grid; place-items: center; box-shadow: 0 0 14px var(--glow) }
+.brand-mark i { width: 8px; height: 8px; background: var(--signal); border-radius: 50%; animation: pulse 2.4s infinite }
+.brand b { font: 600 15px var(--f-display); letter-spacing: .14em }
+.ask { display: flex; align-items: center; gap: 8px; background: var(--raise); border: 1px solid var(--line); border-radius: 10px; padding: 4px 4px 4px 12px; min-width: 0 }
+.ask:focus-within { border-color: var(--signal); box-shadow: 0 0 0 3px var(--glow) }
+.ask input { flex: 1; min-width: 0; background: none; border: 0; color: var(--ink); font: 14px var(--f-body); padding: 7px 0; outline: none }
+.ask kbd { font: 11px var(--f-mono); color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px }
+.btn { background: var(--signal); color: var(--bg); border: 0; border-radius: 7px; padding: 7px 14px; font-weight: 600; cursor: pointer; white-space: nowrap }
+.btn.ghost { background: none; color: var(--ink); border: 1px solid var(--line) }
+.status { display: flex; gap: 12px; align-items: center; font: 12px var(--f-mono); color: var(--muted); white-space: nowrap }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--signal); box-shadow: 0 0 8px var(--signal) }
+.bar .inner.tabs { display: flex; gap: 4px; padding-block: 10px 0; overflow-x: auto }
+.tab { background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 14px; cursor: pointer; color: var(--muted); font: 600 13px var(--f-display); letter-spacing: .08em; text-transform: uppercase; white-space: nowrap }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--signal) }
+main { padding-block: 22px 60px }
+.view { display: grid; gap: 18px }
+
+/* panels */
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; min-width: 0 }
+.panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 12px; flex-wrap: wrap }
+.grid-2 { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 18px }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px }
+.kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 2px; position: relative; overflow: hidden }
+.kpi b { font: 600 26px var(--f-display); font-variant-numeric: tabular-nums }
+.kpi span { color: var(--muted); font-size: 12px }
+.kpi.warn b { color: var(--amber) } .kpi.bad b { color: var(--red) } .kpi.good b { color: var(--signal) }
+
+/* overview: service matrix */
+.matrix { display: grid; gap: 14px }
+.mrow { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 12px; align-items: start }
+.mrow h3 { font-size: 13px; padding-top: 6px }
+.mcells { display: flex; flex-wrap: wrap; gap: 6px }
+.cell { width: 128px; background: var(--raise); border: 1px solid var(--line); border-radius: 8px; padding: 8px; display: grid; gap: 5px; cursor: pointer; text-align: left }
+.cell.warn { border-color: var(--amber); box-shadow: inset 0 0 0 1px var(--amber-dim) } .cell.bad { border-color: var(--red); box-shadow: 0 0 12px var(--red-dim) } .cell.off { opacity: .45 }
+.cell .nm { font: 500 11px var(--f-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.gauge { display: grid; grid-template-columns: 26px 1fr; gap: 6px; align-items: center; font: 10px var(--f-mono); color: var(--muted) }
+.gt { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden } .gf { height: 100%; background: var(--signal) }
+.gf.warn { background: var(--amber) } .gf.bad { background: var(--red) }
+.alerts { display: grid; gap: 8px }
+.alert { display: grid; grid-template-columns: 4px minmax(0, 1fr); gap: 10px; background: var(--raise); border-radius: 8px; padding: 10px 12px 10px 0; overflow: hidden }
+.alert::before { content: ""; background: var(--amber); border-radius: 0 3px 3px 0 }
+.alert.bad::before { background: var(--red) }
+.alert b { font: 500 12px var(--f-mono); display: block } .alert span { color: var(--muted); font-size: 13px }
+
+/* architecture */
+.arch { display: grid; grid-template-columns: minmax(0, 360px) minmax(0, 1fr); gap: 18px; align-items: start }
+.tree { max-height: 72vh; overflow: auto; padding-right: 4px }
+.filter { width: 100%; background: var(--raise); border: 1px solid var(--line); border-radius: 8px; color: var(--ink); padding: 8px 10px; font: 13px var(--f-body); margin-bottom: 10px }
+details { border-left: 1px solid var(--line); margin-left: 6px }
+details > summary { list-style: none; cursor: pointer; padding: 5px 8px; border-radius: 6px; display: flex; gap: 8px; align-items: center }
+details > summary::-webkit-details-marker { display: none }
+details > summary::before { content: "▸"; color: var(--muted); font-size: 10px; transition: transform .15s }
+details[open] > summary::before { transform: rotate(90deg) }
+details > summary:hover { background: var(--raise) }
+.tree > details { border-left: 0; margin-left: 0 }
+.cnt { margin-left: auto; font: 11px var(--f-mono); color: var(--muted) }
+.route { display: flex; gap: 8px; align-items: baseline; padding: 4px 8px 4px 22px; cursor: pointer; border-radius: 6px; width: 100%; background: none; border: 0; text-align: left }
+.route:hover, .route.sel { background: var(--signal-dim) }
+.verb { font: 500 10px var(--f-mono); min-width: 44px; color: var(--blue) }
+.verb.POST { color: var(--signal) } .verb.PUT, .verb.PATCH { color: var(--amber) } .verb.DELETE { color: var(--red) } .verb.WS, .verb.WEBSOCKET { color: var(--violet) }
+.rp { font: 12px var(--f-mono); word-break: break-all }
+.rt { color: var(--muted); font-size: 12px; margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40% }
+.mod-card { display: grid; gap: 14px }
+.chips { display: flex; flex-wrap: wrap; gap: 6px }
+.chip { font: 11px var(--f-mono); padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--raise) }
+.chip.infra { border-color: var(--signal); color: var(--signal) } .chip.ext { border-color: var(--violet); color: var(--violet) }
+
+/* trace */
+.trace-head { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; justify-content: space-between }
+.cands { display: flex; flex-wrap: wrap; gap: 6px }
+.cand { background: var(--raise); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; cursor: pointer; display: flex; gap: 8px; align-items: baseline }
+.cand[aria-pressed="true"] { border-color: var(--signal); box-shadow: 0 0 0 2px var(--glow) }
+.svgwrap { overflow-x: auto; background: var(--bg) }
+.svgwrap svg { display: block; min-width: 1100px; width: 100%; height: auto }
+.player { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 12px 14px; border-bottom: 1px solid var(--line); background: var(--panel) }
+.legend-line { margin-left: auto; color: var(--muted); font-size: 12px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap }
+.lg { display: inline-block; width: 22px; height: 0; border-top: 2px solid var(--signal); margin-left: 8px }
+.lg.ret { border-top-style: dashed; border-color: var(--blue) } .lg.cond { border-top-style: dotted; border-color: var(--amber) } .lg.async { border-color: var(--violet) }
+.seq { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; max-height: 520px; overflow: auto; position: relative }
+.stage { position: relative }
+.status-strip { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; position: relative; overflow: hidden }
+.status-strip.bad { border-color: var(--red); box-shadow: inset 4px 0 0 var(--red) } .status-strip.warn { border-color: var(--amber); box-shadow: inset 4px 0 0 var(--amber) }
+.status-pill { font: 600 13px var(--f-display); letter-spacing: .12em; text-transform: uppercase; padding: 6px 12px; border-radius: 8px; display: flex; gap: 8px; align-items: center }
+.status-pill.bad { background: var(--red-dim); color: var(--red) } .status-pill.warn { background: var(--amber-dim); color: var(--amber) } .status-pill.ok { background: var(--signal-dim); color: var(--signal) }
+.status-pill i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; animation: pulse 1.6s infinite }
+.status-why { display: grid; gap: 2px; min-width: 0; flex: 1 } .status-why b { font-size: 15px } .status-why span { color: var(--muted); font-size: 13px }
+.golden { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px }
+.gs { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px 10px; display: grid; gap: 4px; min-width: 0 }
+.gs .top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px }
+.gs b { font: 600 28px var(--f-display); font-variant-numeric: tabular-nums } .gs .unit { font-size: 13px; color: var(--muted); font-weight: 400 }
+.gs .note { font-size: 12px; color: var(--muted) } .gs.bad b { color: var(--red) } .gs.warn b { color: var(--amber) }
+.gs svg { width: 100%; height: 36px; display: block }
+.grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px }
+.chart { position: relative } .chart svg { width: 100%; height: auto; display: block; overflow: visible }
+.chart + .chart { margin-top: 10px }
+.tip { position: absolute; pointer-events: none; background: var(--raise); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: 11px var(--f-mono); color: var(--ink); white-space: nowrap; transform: translate(-50%, -110%); z-index: 3 }
+.aq { display: grid; gap: 8px; max-height: 470px; overflow: auto }
+.aqi { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; background: var(--raise); border-radius: 9px; padding: 10px 12px }
+.sev { font: 600 10px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; padding: 3px 7px; border-radius: 4px; align-self: start }
+.sev.bad { background: var(--red-dim); color: var(--red) } .sev.warn { background: var(--amber-dim); color: var(--amber) } .sev.save { background: var(--signal-dim); color: var(--signal) }
+.aqi b { font-size: 13px; display: block } .aqi p { margin: 3px 0 0; font-size: 12px; color: var(--muted) } .aqi .fix { color: var(--ink) } .aqi .fix::before { content: "Fix → "; color: var(--signal); font-weight: 600 }
+.svcbar { display: grid; grid-template-columns: minmax(0, 190px) minmax(0, 1fr) 84px; gap: 10px; align-items: center; padding: 5px 0; font-size: 12px }
+.svcbar .nm { font-family: var(--f-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis } .svcbar .num { font-family: var(--f-mono); text-align: right; color: var(--muted); white-space: nowrap }
+.svcbar .bt { height: 10px; background: var(--line); border-radius: 0 4px 4px 0 } .svcbar .bf { height: 100%; background: var(--signal); border-radius: 0 4px 4px 0 }
+.svcbar.dead .nm { color: var(--red) } .svcbar.dead .bt { background: repeating-linear-gradient(45deg, var(--red-dim) 0 4px, transparent 4px 8px) }
+.qmult { display: grid; gap: 12px }
+@media (max-width: 1000px) { .grid-3 { grid-template-columns: 1fr } }
+.chip-btn { background: var(--raise); border: 1px solid var(--line); color: var(--muted); border-radius: 999px; padding: 4px 10px; font: 500 12px var(--f-body); cursor: pointer }
+.chip-btn[aria-pressed="true"] { color: var(--bg); background: var(--signal); border-color: var(--signal) }
+.sdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin: 0 4px 0 8px; background: var(--signal) }
+.sdot.warn { background: var(--amber) } .sdot.bad { background: var(--red) } .sdot.off { background: var(--line) }
+.arch-info { padding: 12px 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; min-height: 46px }
+.arch-info b { color: var(--ink) }
+#aws-arch svg { min-width: 1240px }
+.an { cursor: default } .an.click { cursor: pointer } .an.dim, .ae.dim { opacity: .14 } .ae { transition: opacity .15s }
+.ae path.l { fill: none; stroke-width: 1.4; stroke: var(--muted); stroke-opacity: .55 }
+.ae.hot path.l { stroke: var(--signal); stroke-opacity: 1; stroke-width: 2.2; stroke-dasharray: 5 6; animation: flow 1s linear infinite }
+.ae.bad path.l { stroke: var(--red); stroke-opacity: .8 } .ae text { opacity: 0 } .ae.hot text, .ae.hot rect.lb { opacity: 1 } .ae rect.lb { opacity: 0 }
+.catalogue > summary { cursor: pointer; list-style: none } .catalogue > summary::-webkit-details-marker { display: none }
+.hud { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); width: min(760px, calc(100% - 32px)); display: flex; gap: 14px; align-items: center;
+  background: color-mix(in srgb, var(--panel) 82%, transparent); backdrop-filter: blur(10px); border: 1px solid var(--signal); border-radius: 14px;
+  padding: 12px 18px; box-shadow: 0 0 0 4px var(--glow), 0 18px 40px rgba(0,0,0,.35) }
+.hud-text { display: grid; gap: 2px; min-width: 0 }
+.hud-step { font: 500 10px var(--f-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--signal) }
+#hud-line { font: 500 16px/1.4 var(--f-body); color: var(--ink) }
+.hud-orb { display: flex; gap: 3px; align-items: center; height: 28px; flex: none }
+.hud-orb i { width: 3px; height: 6px; border-radius: 2px; background: var(--signal) }
+.hud.talking .hud-orb i { animation: wave 0.9s ease-in-out infinite } .hud-orb i:nth-child(2) { animation-delay: .12s } .hud-orb i:nth-child(3) { animation-delay: .24s }
+.hud-orb i:nth-child(4) { animation-delay: .36s } .hud-orb i:nth-child(5) { animation-delay: .48s }
+@keyframes wave { 0%, 100% { height: 5px } 50% { height: 24px } }
+.voice[aria-pressed="false"] { color: var(--muted) }
+.vpick { display: flex; gap: 6px; align-items: center }
+.vpick select { background: var(--raise); color: var(--ink); border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; font: 12px var(--f-body); max-width: 220px }
+@media (prefers-reduced-motion: reduce) { .hud.talking .hud-orb i { animation: none; height: 14px } }
+@media (max-width: 700px) { .hud { position: static; transform: none; width: auto; margin: 10px } #hud-line { font-size: 14px } }
+.seq li { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; padding: 8px 6px; border-radius: 8px; cursor: pointer }
+.seq li:hover { background: var(--raise) } .seq li.on { background: var(--signal-dim) }
+.seq .no { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font: 600 11px var(--f-mono); border: 1px solid var(--signal); color: var(--signal) }
+.seq li.async .no { border-color: var(--violet); color: var(--violet) } .seq li.cond .no { border-color: var(--amber); color: var(--amber) } .seq li.ret .no { border-color: var(--blue); color: var(--blue) }
+.seq b { font-weight: 600; font-size: 13px } .seq p { margin: 2px 0 0; color: var(--muted); font-size: 12px } .seq code { font: 11px var(--f-mono); color: var(--ink); word-break: break-all }
+.zone-t { font: 600 11px var(--f-mono); letter-spacing: .1em; text-transform: uppercase }
+.arr { fill: none; stroke-width: 1.6 } .arr.sync { stroke: var(--signal) } .arr.ret { stroke: var(--blue); stroke-dasharray: 6 5 }
+.arr.cond { stroke: var(--amber); stroke-dasharray: 2 4 } .arr.async { stroke: var(--violet) } .arr.dim { opacity: .18 } .arr.hot { stroke-width: 3; opacity: 1 }
+.nd.dim { opacity: .35 } .nd.hot rect.box { stroke-width: 2.4 }
+.badge circle { stroke-width: 1.2 } .badge text { font: 600 10px var(--f-mono) }
+svg text { font-family: var(--f-mono) }
+.edge { fill: none; stroke: var(--line); stroke-width: 1.5 }
+.edge.live { stroke: var(--signal); stroke-width: 1.5; stroke-dasharray: 4 8; animation: flow 1.2s linear infinite }
+.edge.http { stroke: var(--blue); stroke-dasharray: 4 8; animation: flow 1.2s linear infinite }
+.edge.data { stroke: var(--violet); stroke-dasharray: 2 6; animation: flow 1.6s linear infinite }
+.narr { background: var(--raise); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; white-space: pre-wrap; line-height: 1.6 }
+.steps { display: grid; gap: 0; counter-reset: s }
+.step { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; padding: 10px 0; border-bottom: 1px dashed var(--line) }
+.step::before { counter-increment: s; content: counter(s); font: 600 12px var(--f-mono); width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--signal); color: var(--signal); display: grid; place-items: center }
+.step b { font-weight: 600 } .step p { margin: 2px 0 0; color: var(--muted) } .step code { font: 12px var(--f-mono); color: var(--ink); word-break: break-all }
+.hint { color: var(--muted); font-size: 13px }
+.examples { display: flex; gap: 6px; flex-wrap: wrap }
+.examples button { background: none; border: 1px dashed var(--line); border-radius: 999px; padding: 4px 10px; color: var(--muted); cursor: pointer; font-size: 12px }
+.examples button:hover { color: var(--ink); border-color: var(--signal) }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top }
+th { font: 500 11px var(--f-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--muted) }
+td.num { font-family: var(--f-mono); text-align: right }
+.tbl { overflow-x: auto }
+.costbar { height: 8px; background: var(--signal); border-radius: 4px; opacity: .8 }
+.foot { color: var(--muted); font-size: 12px }
+.comp-nav { display: flex; gap: 6px; flex-wrap: wrap }
+.comp-nav a { font: 500 12px var(--f-mono); text-decoration: none; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px }
+.comp-nav a:hover { color: var(--ink); border-color: var(--signal) }
+.comp-sec { scroll-margin-top: 130px }
+.comp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px }
+.comp { background: var(--raise); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 4px; min-width: 0 }
+.comp.warn { border-color: var(--amber) } .comp.bad { border-color: var(--red) } .comp.idle { opacity: .55 }
+.comp .nm { font: 500 12px var(--f-mono); word-break: break-all }
+.comp .meta { font: 11px var(--f-mono); color: var(--muted) }
+.comp .note { font-size: 12px; color: var(--amber) } .comp.bad .note { color: var(--red) }
+.pill { font: 500 10px var(--f-mono); padding: 1px 6px; border-radius: 4px; background: var(--signal-dim); color: var(--signal); justify-self: start }
+.pill.amber { background: var(--amber-dim); color: var(--amber) } .pill.red { background: var(--red-dim); color: var(--red) } .pill.mute { background: var(--line); color: var(--muted) }
+td .rp { font-size: 11px }
+
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(420px, 100%); background: var(--panel); border-left: 1px solid var(--line); z-index: 40;
+  padding: calc(18px + env(safe-area-inset-top, 0px)) calc(18px + env(safe-area-inset-right, 0px)) calc(18px + env(safe-area-inset-bottom, 0px)) 18px; overflow: auto; display: grid; gap: 14px; align-content: start; box-shadow: -20px 0 40px rgba(0,0,0,.35) }
+.drawer dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 12px; margin: 0 } .drawer dt { color: var(--muted) } .drawer dd { margin: 0; word-break: break-word }
+
+@keyframes flow { to { stroke-dashoffset: -24 } }
+@keyframes pulse { 50% { opacity: .35 } }
+@media (prefers-reduced-motion: reduce) { .edge.live, .edge.http, .edge.data, .brand-mark i { animation: none } }
+@media (max-width: 900px) { .grid-2, .arch { grid-template-columns: 1fr } .bar .inner { grid-template-columns: 1fr } .status { display: none } .mrow { grid-template-columns: 1fr } .tree { max-height: 50vh } }
+@media (max-width: 480px) { .cell { width: calc(50% - 3px) } }
+</style>
+
+<header class="bar gutter">
+  <div class="inner">
+    <div class="brand"><span class="brand-mark"><i></i></span><b id="brand">HOPSCOPE</b></div>
+    <form class="ask" id="ask-form" autocomplete="off">
+      <span class="label" style="letter-spacing:.06em">ASK</span>
+      <input id="ask" type="text" placeholder="Show me /auth execution flow on infra" aria-label="Ask about an API, service or flow">
+      <kbd>⌘K</kbd><button class="btn" type="submit" id="ask-go">Trace</button>
+    </form>
+    <div class="status"><span><span class="dot"></span> AWS</span><span>Loading…</span></div>
+  </div>
+  <div class="inner tabs" role="tablist">
+    <button class="tab" role="tab" id="tab-overview" data-v="overview">Overview</button>
+    <button class="tab" role="tab" id="tab-architecture" data-v="architecture">Architecture</button>
+    <button class="tab" role="tab" id="tab-components" data-v="components">AWS components</button>
+    <button class="tab" role="tab" id="tab-trace" data-v="trace">Trace</button>
+    <button class="tab" role="tab" id="tab-cost" data-v="cost">Cost</button>
+  </div>
+</header>
+
+<main class="gutter"><div class="inner">
+  <section class="view" id="v-overview">
+    <div class="status-strip" id="status-strip"></div>
+    <div class="golden" id="golden"></div>
+    <div class="grid-2">
+      <div class="panel"><div class="panel-head"><h2>Public traffic and failures</h2><span class="label" id="lb-label">per hour · last 72 h</span></div>
+        <div class="chart" id="ch-req"></div><div class="chart" id="ch-503"></div></div>
+      <div class="panel"><div class="panel-head"><h2>Action queue</h2><span class="label" id="aq-count"></span></div><div class="aq" id="aq"></div></div>
+    </div>
+    <div class="grid-3">
+      <div class="panel"><div class="panel-head"><h2>Database capacity</h2><span class="label" id="db-label"></span></div><div class="chart" id="ch-acu"></div></div>
+      <div class="panel"><div class="panel-head"><h2>Memory hotspot</h2><span class="label" id="mem-label"></span></div><div class="chart" id="ch-mem"></div></div>
+      <div class="panel"><div class="panel-head"><h2>Daily spend</h2><span class="label">USD before tax · 14 days</span></div><div class="chart" id="ch-cost"></div></div>
+    </div>
+    <div class="grid-2">
+      <div class="panel"><div class="panel-head"><h2>Traffic by service</h2><span class="label">requests · 3 days · healthy targets</span></div><div id="by-svc"></div></div>
+      <div class="panel"><div class="panel-head"><h2>Queue throughput</h2><span class="label">messages sent per hour</span></div><div class="qmult" id="qmult"></div></div>
+    </div>
+    <details class="panel catalogue"><summary><h2 style="display:inline">All services</h2> <span class="label" id="sig-count"></span></summary>
+      <div class="grid-2" style="margin-top:14px">
+        <div><div class="matrix" id="matrix"></div></div>
+        <div><div class="alerts" id="alerts"></div></div>
+      </div>
+    </details>
+    <div class="kpis" id="kpis" hidden></div>
+  </section>
+
+  <section class="view" id="v-architecture" hidden>
+    <div class="panel" style="padding:0;overflow:hidden">
+      <div class="player">
+        <div style="display:grid;gap:2px"><span class="label" id="arch-kicker">AWS architecture</span><h2 style="font-size:18px" id="arch-title">Platform, as deployed</h2></div>
+        <span class="legend-line" style="margin-left:auto">
+          <button class="chip-btn" id="env-prod" type="button" aria-pressed="true">Production</button>
+          <button class="chip-btn" id="env-all" type="button" aria-pressed="false">Include staging</button>
+          <span><i class="sdot ok"></i>healthy</span><span><i class="sdot warn"></i>warning</span><span><i class="sdot bad"></i>critical</span><span><i class="sdot off"></i>idle</span>
+        </span>
+      </div>
+      <div class="svgwrap" id="aws-arch"></div>
+      <div class="arch-info" id="arch-info">Hover over any box to see what it connects to. Click a service to open its details.</div>
+    </div>
+    <details class="panel catalogue"><summary><h2 style="display:inline">API catalogue</h2> <span class="label" id="cat-count"></span></summary>
+    <div class="arch" style="margin-top:14px">
+      <div class="panel"><div class="panel-head"><h2>System tree</h2><span class="label" id="tree-count"></span></div>
+        <input class="filter" id="tree-filter" type="search" placeholder="Filter APIs, e.g. orders, checkout, /account">
+        <div class="tree" id="tree"></div></div>
+      <div class="panel" id="mod-detail"></div>
+    </div>
+    </details>
+  </section>
+
+  <section class="view" id="v-components" hidden>
+    <div class="kpis" id="comp-kpis"></div>
+    <div class="comp-nav" id="comp-nav"></div>
+    <div id="comp-body" style="display:grid;gap:18px"></div>
+  </section>
+
+  <section class="view" id="v-trace" hidden>
+    <div class="panel">
+      <div class="trace-head">
+        <div style="display:grid;gap:6px;min-width:0"><span class="label">Execution trace</span><h2 id="trace-title">Ask for any API or flow</h2><span class="hint" id="trace-sub">Type in the bar above, or pick an example.</span></div>
+        <div class="examples" id="examples"></div>
+      </div>
+      <div class="cands" id="cands" style="margin-top:14px"></div>
+    </div>
+    <div class="panel" style="padding:0;overflow:hidden">
+      <div class="player">
+        <button class="btn" id="play" type="button">▶ Play request</button>
+        <button class="btn ghost" id="prev" type="button" aria-label="Previous step">‹</button>
+        <button class="btn ghost" id="next" type="button" aria-label="Next step">›</button>
+        <span class="mono" id="stepnow">Step — of —</span>
+        <button class="btn ghost voice" id="voice" type="button" aria-pressed="true">Voice on</button>
+        <label class="vpick"><span class="label">Voice</span><select id="voice-pick" aria-label="Narrator voice"></select></label>
+        <label class="vpick"><span class="label">Speed</span><select id="voice-rate" aria-label="Narration speed"><option value="0.9">Relaxed</option><option value="1.04" selected>Normal</option><option value="1.18">Brisk</option></select></label>
+        <span class="legend-line"><i class="lg sync"></i>request · <i class="lg ret"></i>response · <i class="lg cond"></i>only sometimes · <i class="lg async"></i>after response (async)</span>
+      </div>
+      <div class="stage">
+        <div class="svgwrap" id="svgwrap"></div>
+        <div class="hud" id="hud" hidden>
+          <div class="hud-orb" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="hud-text"><span class="hud-step" id="hud-step"></span><span id="hud-line" aria-live="polite"></span></div>
+        </div>
+      </div>
+    </div>
+    <div class="grid-2">
+      <div class="panel"><div class="panel-head"><h2>Sequence</h2><span class="label">request → code → infra</span></div><ol class="seq" id="steps"></ol></div>
+      <div class="panel"><div class="panel-head"><h2>Analyst</h2><span style="display:flex;gap:8px;align-items:center"><span class="label" id="ai-state">built-in</span><button class="btn ghost" id="ask-claude" type="button">Ask Claude</button></span></div><div class="narr" id="narr">Ask a question to get a plain-language walk-through of the flow, its risks and the infra it depends on.</div></div>
+    </div>
+  </section>
+
+  <section class="view" id="v-cost" hidden>
+    <div class="grid-2">
+      <div class="panel"><div class="panel-head"><h2>Spend, last 30 days</h2><span class="label">USD, AWS Cost Explorer</span></div><div class="tbl"><table id="spend"><thead><tr><th>Service</th><th></th><th style="text-align:right">USD</th></tr></thead><tbody></tbody></table></div></div>
+      <div class="panel"><div class="panel-head"><h2>Savings queue</h2><span class="label">no production impact</span></div><div class="tbl"><table id="savings"><thead><tr><th>Action</th><th style="text-align:right">≈ / month</th></tr></thead><tbody></tbody></table></div></div>
+    </div>
+  </section>
+
+  <p class="foot" id="foot">Sources: AWS CloudWatch, Cost Explorer and the AWS APIs (read-only), and the code map. Links between code and infrastructure are inferred; see <code>hopscope.py review</code>.</p>
+</div></main>
+
+<aside class="drawer" id="drawer" hidden></aside>
+
+<script>
+// ---------- data: filled from model.json (and code/aws/flows/ts.json) at load ----------
+let M = null; // console model: resources, systems, links, actions
+let INFRA = [], SYS_LABEL = {}, PLACEMENT = {}, QUEUES = {}, QUEUE_WORKER = {}, TG_HOST = {}, SPEND = [], SAVINGS = [], EXAMPLES = [];
+const EXTERNAL = {
+  postgres: { n: 'Postgres', r: 'database', c: 'data' }, mysql: { n: 'MySQL', r: 'database', c: 'data' }, mongo: { n: 'MongoDB', r: 'database', c: 'data' },
+  cognito: { n: 'Amazon Cognito', r: 'user pool', c: 'cloud' }, sqs: { n: 'Amazon SQS', r: 'queues', c: 'cloud' }, ses: { n: 'Amazon SES', r: 'email delivery', c: 'cloud' },
+  s3: { n: 'Amazon S3', r: 'buckets', c: 'cloud' }, aws: { n: 'AWS SDK', r: 'other AWS calls', c: 'cloud' }, cache: { n: 'Cache', r: 'ElastiCache', c: 'data' },
+  search: { n: 'OpenSearch', r: 'search cluster', c: 'data' }, llm: { n: 'AI model API', r: 'model provider', c: 'cloud' },
+  tracing: { n: 'Monitoring', r: 'traces and errors', c: 'cloud' }, chatapps: { n: 'Chat apps', r: 'external SaaS', c: 'cloud' },
+};
+let A = null; // AWS component inventory (aws.json)
+function edgeFor(name) {
+  const row = byName[name];
+  if (!A || !row?.key) return null;
+  for (const lb of A.lb) for (const r of lb.routes) if (r.services.includes(row.key)) return { lb: lb.n, when: r.when, port: r.port, scheme: lb.scheme };
+  return null;
+}
+
+// ---------- helpers ----------
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const lvlOf = (v) => (v >= 80 ? 'bad' : v < 1 ? 'warn' : '');
+const fmt = (v) => (v == null ? '—' : v < 1 ? v.toFixed(2) : v.toFixed(1));
+let byName = {};
+let D = null;
+
+function serviceRoot(path) {
+  const roots = [...(D?.services || []), ...Object.keys(PLACEMENT)].filter((k) => k && k !== '.').sort((a, b) => b.length - a.length);
+  return roots.find((k) => path.startsWith(k + '/')) || (PLACEMENT['.'] ? '.' : path.split('/').slice(0, 2).join('/'));
+}
+function layerOf(p) {
+  if (/\/(api|endpoints|routes|webhooks|routers?)\//.test(p) || /router|api\.py$/.test(p)) return 'API';
+  if (/\/(service|services|repository|handlers?|workers?|channels|adapters)\//.test(p)) return 'Logic';
+  if (/\/(models|schemas)\//.test(p)) return 'Data';
+  return 'Setup';
+}
+
+// ---------- views ----------
+function showView(v) {
+  if (!['overview', 'architecture', 'components', 'trace', 'cost'].includes(v)) v = 'overview';
+  document.querySelectorAll('.view').forEach((el) => (el.hidden = el.id !== 'v-' + v));
+  document.querySelectorAll('.tab').forEach((t) => t.setAttribute('aria-selected', t.dataset.v === v));
+  if (location.hash.slice(1) !== v) history.replaceState(null, '', '#' + v);
+}
+document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => showView(t.dataset.v)));
+window.addEventListener('hashchange', () => showView(location.hash.slice(1)));
+
+function renderOverview() {
+  const live = INFRA.filter((r) => r.kind !== 'rds');
+  const sig = INFRA.filter((r) => r.lvl);
+  $('#kpis').innerHTML = [
+    ['good', live.filter((r) => r.kind === 'ecs').length, 'containers live'], ['', live.filter((r) => r.kind === 'ec2').length, 'servers live'],
+    ['', D ? D.routes.length : '—', 'APIs mapped'], ['', '$' + Math.round(SPEND.reduce((a, s) => a + s[1], 0)).toLocaleString(), 'AWS spend, 30 days'],
+    ['warn', sig.filter((r) => r.lvl === 'warn').length, 'warnings'], ['bad', sig.filter((r) => r.lvl === 'bad').length, 'critical'],
+  ].map(([c, b, s]) => `<div class="kpi ${c}"><b>${b}</b><span>${s}</span></div>`).join('');
+  const groups = {};
+  INFRA.forEach((r) => (groups[r.sys] ||= []).push(r));
+  $('#matrix').innerHTML = Object.entries(groups).map(([sys, rs]) => `<div class="mrow"><h3>${esc(SYS_LABEL[sys] || sys)}</h3><div class="mcells">${rs.map(cellHtml).join('')}</div></div>`).join('');
+  $('#sig-count').textContent = sig.length + ' open';
+  $('#alerts').innerHTML = sig.sort((a, b) => (a.lvl === 'bad' ? -1 : 1)).map((r) => `<div class="alert ${r.lvl}"><div><b>${esc(r.n)}</b><span>${esc(r.note)}</span></div></div>`).join('');
+}
+function cellHtml(r) {
+  const g = (lab, v, max = 100) => `<div class="gauge"><span>${lab}</span><div class="gt"><div class="gf ${lvlOf((v / max) * 100)}" style="width:${Math.max(2, Math.min(100, (v / max) * 100))}%"></div></div></div>`;
+  const body = r.kind === 'rds' ? g('CAP', r.cpu) : ['sqs', 'lb'].includes(r.kind) ? `<span class="gauge">${esc(r.size)}</span>` : g('CPU', r.cpu) + (r.mem != null ? g('MEM', r.mem) : '');
+  return `<button class="cell ${r.lvl || ''}" data-res="${esc(r.n)}" title="${esc(r.n)}"><span class="nm">${esc(r.n)}</span>${body}</button>`;
+}
+function openRes(name) {
+  const r = byName[name]; if (!r) return;
+  const roots = Object.entries(PLACEMENT).filter(([, v]) => v.compute.includes(name)).map(([k]) => k);
+  const routes = D ? D.routes.filter((x) => roots.includes(serviceRoot(D.files[x.f].p))) : [];
+  $('#drawer').innerHTML = `<button class="btn ghost" id="dclose" style="justify-self:end">Close</button>
+    <div><span class="label">${esc(SYS_LABEL[r.sys] || r.sys)} · ${r.env}</span><h2 class="mono" style="font-family:var(--f-mono);font-size:17px;word-break:break-all">${esc(r.n)}</h2></div>
+    ${r.note ? `<div class="alert ${r.lvl}"><div><b>${r.lvl === 'bad' ? 'Critical' : 'Warning'}</b><span>${esc(r.note)}</span></div></div>` : ''}
+    <dl><dt>Type</dt><dd>${{ ecs: 'ECS container service', ec2: 'EC2 server', rds: 'Aurora serverless database', sqs: 'SQS queue', lb: 'Load balancer' }[r.kind]}</dd>${edgeFor(r.n) ? `<dt>Public route</dt><dd class="mono">${esc(edgeFor(r.n).lb)}<br>${esc(edgeFor(r.n).when)}</dd>` : ''}<dt>Size</dt><dd>${esc(r.size)}</dd>
+    <dt>${r.kind === 'rds' ? 'Capacity used' : 'CPU avg'}</dt><dd class="mono">${fmt(r.cpu)}%</dd>${r.mem != null ? `<dt>Memory avg</dt><dd class="mono">${fmt(r.mem)}%</dd>` : ''}
+    <dt>Runs code</dt><dd class="mono">${roots.map(esc).join('<br>') || '—'}</dd><dt>APIs served</dt><dd>${routes.length || '—'}</dd></dl>
+    ${routes.length ? `<div><span class="label">Sample APIs</span>${routes.slice(0, 12).map((x) => `<button class="route" data-route="${D.routes.indexOf(x)}"><span class="verb ${esc(x.m)}">${esc(x.m)}</span><span class="rp">${esc(x.p)}</span></button>`).join('')}</div>` : ''}`;
+  $('#drawer').hidden = false; $('#dclose').focus();
+}
+
+// ---------- architecture ----------
+function moduleOfRoute(r) { return D.files[r.f].m; }
+function renderTree(q = '') {
+  const ql = q.trim().toLowerCase();
+  const mods = D.modules.filter((m) => m.parent === null && m.files > 0 && !['migrations', 'tests'].includes(m.id));
+  let shown = 0;
+  $('#tree').innerHTML = mods.map((sys) => {
+    const subs = D.modules.filter((m) => m.parent === sys.id);
+    const subHtml = subs.map((m) => {
+      const rs = D.routes.map((r, i) => [r, i]).filter(([r]) => moduleOfRoute(r) === m.id && (!ql || (r.p + ' ' + r.t + ' ' + r.d).toLowerCase().includes(ql)));
+      if (ql && !rs.length) return '';
+      shown += rs.length;
+      return `<details ${ql ? 'open' : ''}><summary data-mod="${esc(m.id)}">${esc(m.label)}<span class="cnt">${rs.length} API</span></summary>
+        ${rs.slice(0, 200).map(([r, i]) => `<button class="route" data-route="${+i}"><span class="verb ${esc(r.m)}">${esc(r.m)}</span><span class="rp">${esc(r.p)}</span><span class="rt">${esc(r.t)}</span></button>`).join('')}</details>`;
+    }).join('');
+    if (ql && !subHtml) return '';
+    return `<details ${ql ? 'open' : ''}><summary data-mod="${esc(sys.id)}"><b>${esc(sys.label)}</b><span class="cnt">${sys.files} files</span></summary>${subHtml}</details>`;
+  }).join('') || '<p class="hint">No API matches that filter.</p>';
+  $('#tree-count').textContent = ql ? `${shown} match` : `${D.routes.length} APIs`;
+}
+function showModule(id) {
+  const m = D.modules.find((x) => x.id === id); if (!m) return;
+  const paths = m.paths.map((p) => p.replace('/**', ''));
+  const place = Object.entries(PLACEMENT).filter(([k]) => paths.some((p) => p.startsWith(k) || k.startsWith(p)));
+  const fileIdx = D.files.map((f, i) => [f, i]).filter(([f]) => f.m === id || (m.parent === null && (f.m.startsWith(id + '.') || f.m.startsWith(id + '::'))));
+  const ext = [...new Set(fileIdx.flatMap(([f]) => f.x))].filter((x) => x !== 'aws' || fileIdx.every(([f]) => !f.x.some((y) => ['cognito', 'sqs', 'ses', 's3'].includes(y))));
+  const outs = (D.moduleLinks || []).filter((l) => l.a === id || l.a.startsWith(id + '.'));
+  const ins = (D.moduleLinks || []).filter((l) => l.b === id || l.b.startsWith(id + '.'));
+  const label = (mid) => D.modules.find((x) => x.id === mid)?.label || mid;
+  const compute = place.flatMap(([, v]) => v.compute);
+  $('#mod-detail').innerHTML = `<div class="mod-card">
+    <div><span class="label">${m.parent ? esc(label(m.parent)) + ' / module' : 'System'}</span><h2>${esc(m.label)}</h2><p class="hint" style="margin:6px 0 0">${esc(m.summary)}</p></div>
+    <div class="kpis"><div class="kpi"><b>${m.files}</b><span>files</span></div><div class="kpi"><b>${(m.loc / 1000).toFixed(1)}k</b><span>lines</span></div>
+      <div class="kpi"><b>${D.routes.filter((r) => { const fm = moduleOfRoute(r); return fm === id || fm.startsWith(id + '.'); }).length}</b><span>APIs</span></div></div>
+    <div><span class="label">Runs on</span><div class="chips" style="margin-top:6px">${compute.length ? compute.map((c) => `<button class="chip infra" data-res="${esc(c)}">${esc(c)} · ${fmt(byName[c]?.cpu)}% cpu</button>`).join('') : '<span class="hint">Not found in the AWS snapshot</span>'}</div></div>
+    <div><span class="label">Depends on</span><div class="chips" style="margin-top:6px">${ext.map((x) => `<span class="chip ext">${EXTERNAL[x]?.n || x}</span>`).join('') || '<span class="hint">No external systems detected</span>'}</div></div>
+    ${outs.length || ins.length ? `<div class="tbl"><table><thead><tr><th>Direction</th><th>System</th><th>How</th></tr></thead><tbody>
+      ${outs.slice(0, 12).map((l) => `<tr><td>calls →</td><td>${esc(label(l.b))}</td><td>${esc(l.k)} ${esc(l.label)}</td></tr>`).join('')}
+      ${ins.slice(0, 12).map((l) => `<tr><td>← called by</td><td>${esc(label(l.a))}</td><td>${esc(l.k)} ${esc(l.label)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    <p class="hint">Pick an API in the tree to trace it through the infrastructure.</p></div>`;
+}
+
+// ---------- trace ----------
+function traceRoute(ri) {
+  const r = D.routes[ri], entry = r.f, root = serviceRoot(D.files[entry].p);
+  const adj = {};
+  D.links.forEach(([a, b, k, lab]) => (adj[a] ||= []).push([b, k, lab]));
+  const local = new Map([[entry, 0]]), queue = [entry], http = [];
+  while (queue.length) {
+    const f = queue.shift(), depth = local.get(f);
+    for (const [b, k, lab] of adj[f] || []) {
+      const bp = D.files[b].p;
+      if (k === 0 && depth < 4 && !local.has(b) && (bp.startsWith(root + '/') || bp.includes('/common/'))) { local.set(b, depth + 1); queue.push(b); }
+      if (k !== 0 && serviceRoot(bp) !== root) http.push({ from: f, to: b, label: lab, kind: k });
+    }
+  }
+  const externals = (files) => { const s = new Set(); files.forEach((f) => D.files[f].x.forEach((x) => s.add(x))); if ([...s].some((x) => ['cognito', 'sqs', 'ses', 's3'].includes(x))) s.delete('aws'); return [...s]; };
+  const localFiles = [...local.keys()];
+  const downstream = {};
+  http.forEach((h) => { const dr = serviceRoot(D.files[h.to].p); (downstream[dr] ||= { root: dr, calls: [], files: new Set([h.to]) }).calls.push(h); downstream[dr].files.add(h.to); });
+  Object.values(downstream).forEach((d) => { [...d.files].forEach((f) => (adj[f] || []).forEach(([b, k]) => { if (k === 0 && D.files[b].p.startsWith(d.root + '/')) d.files.add(b); })); d.ext = externals([...d.files]); });
+  const touch = localFiles.filter((f) => f === entry || D.files[f].x.length || http.some((h) => h.from === f)).slice(0, 9);
+  const fp = D.files[entry].p.replace(/_/g, "-");
+  // Prefer the container whose name matches the handler's folder, then one the load balancer actually routes to.
+  const fit = (n) => (fp.includes(n.split("-").slice(-2).join("-")) ? 2 : 0) + (edgeFor(n) ? 1 : 0) + (byName[n]?.tasks ? 0.5 : 0);
+  const compute = (PLACEMENT[root]?.compute || []).slice().sort((a, b) => fit(b) - fit(a));
+  const edge = edgeFor(compute[0]);
+  const queues = (QUEUES[root] || []).map((n) => A?.sqs.find((q) => q.n === n)).filter(Boolean);
+  return { ri, r, root, compute, edge, queues, place: PLACEMENT[root], localFiles, touch, ext: externals(localFiles), downstream: Object.values(downstream) };
+}
+
+// ---------- ask ----------
+const STOP = new Set('show me the a an of on in for to how does do what is flow flows execution infra infrastructure api apis trace happens when reach'.split(' '));
+function score(r, terms, pathTerm) {
+  const f = D.files[r.f].p, hay = (r.p + ' ' + r.t + ' ' + r.d + ' ' + f).toLowerCase();
+  let s = 0;
+  if (pathTerm) { if (r.p.toLowerCase() === pathTerm) s += 30; else if (r.p.toLowerCase().startsWith(pathTerm)) s += 18; else if (r.p.toLowerCase().includes(pathTerm)) s += 10; if (r.p.toLowerCase().endsWith(pathTerm)) s += 8; }
+  terms.forEach((t) => { if (r.p.toLowerCase().includes(t)) s += 5; if (r.t.toLowerCase().includes(t)) s += 4; if (hay.includes(t)) s += 1; });
+  if (PLACEMENT[serviceRoot(f)]) s += 2;
+  if (/(^|\/)(experiments?|examples?|samples?|sandbox|playground|scratch)(\/|$)/.test(f)) s -= 4;
+  return s;
+}
+function candidates(q) {
+  const ql = q.toLowerCase();
+  const pathTerm = (ql.match(/\/[\w\-\/{}.]+/) || [])[0];
+  const terms = ql.replace(/\/[\w\-\/{}.]+/g, ' ').split(/[^a-z0-9_-]+/).filter((w) => w.length > 2 && !STOP.has(w));
+  if (pathTerm) terms.push(...pathTerm.split('/').filter((w) => w.length > 2));
+  return D.routes.map((r, i) => [i, score(r, terms, pathTerm)]).filter(([, s]) => s > 0).sort((a, b) => b[1] - a[1]).slice(0, 40).map(([i]) => i);
+}
+let sampleP = null;
+function getSample() { return (sampleP ||= (window.claude?.use ? window.claude.use('sample') : Promise.resolve(null))); }
+let askCtl = null;
+
+async function ask(q) {
+  if (!D || !q.trim()) return;
+  showView('trace');
+  const cands = candidates(q);
+  if (!cands.length) { $('#trace-title').textContent = 'No API matched'; $('#trace-sub').textContent = 'Try a path like /orders or a word like checkout, refund or email.'; $('#cands').innerHTML = ''; return; }
+  renderCands(cands.slice(0, 8), cands[0]);
+  traceAndDraw(cands[0]);
+  const sample = await getSample().catch(() => null);
+  if (!sample) { setAnalyst('built-in', null); return; }
+  askCtl?.abort(); askCtl = new AbortController();
+  const signal = askCtl.signal;
+  $('#ai-state').textContent = 'matching…';
+  let primary = cands[0], related = [];
+  try {
+    const list = cands.slice(0, 30).map((i) => { const r = D.routes[i]; return `${i} | ${r.m} ${r.p} | ${r.t} | ${D.files[r.f].p}`; }).join('\n');
+    const pick = await sample.json(`You map a user's question about a software platform to its API routes. Question: "${q}"\nCandidate routes (index | method path | name | file):\n${list}\nReturn JSON {"primary": <index of the single best route>, "related": [up to 5 other indexes that form the same flow, in call order]}. Use only indexes from the list.`, { modelTier: 'quick', signal });
+    if (cands.includes(pick?.primary)) primary = pick.primary;
+    related = (pick?.related || []).filter((i) => cands.includes(i) && i !== primary);
+    renderCands([primary, ...related, ...cands.filter((i) => i !== primary && !related.includes(i))].slice(0, 8), primary);
+    if (primary !== cands[0]) traceAndDraw(primary);
+  } catch (e) {
+    if (signal.aborted) return; // a newer question replaced this one; keep the best local match
+  }
+  await analyze(q, related, sample, signal);
+}
+
+// One Claude call at a time: the analysis first, then the narration rewrite.
+async function analyze(q, related, sample, signal) {
+  if (!ARCH) return;
+  const t = ARCH.t, seqNow = ARCH.S.seq;
+  $('#ai-state').textContent = 'thinking…';
+  $('#narr').textContent = localBrief(t, ARCH.S) + '\n\nClaude is reading the flow…';
+  try {
+    const res = await sample(`You are a site reliability engineer explaining a request flow to a product leader. Question: "${q}"\nTrace computed from code and AWS:\n${describeTrace(t)}\nRelated routes in the same flow: ${related.map((i) => D.routes[i].m + ' ' + D.routes[i].p + ' (' + D.routes[i].t + ')').join('; ') || 'none'}\nWrite plain text, no markdown, under 170 words: 1) what happens, step by step, naming the AWS resources; 2) the single biggest risk on this path given the usage numbers; 3) one concrete improvement. Do not invent services not in the trace.`,
+      { modelTier: 'default', signal, onText: ({ text }) => { if (text && ARCH?.S.seq === seqNow) $('#narr').textContent = text; } });
+    if (ARCH?.S.seq !== seqNow) return;
+    if (res?.text) $('#narr').textContent = res.text;
+    $('#ai-state').textContent = 'Claude';
+  } catch (e) {
+    if (signal.aborted || ARCH?.S.seq !== seqNow) return;
+    setAnalyst('error', e);
+    return;
+  }
+  try {
+    const lines = await sample.json(`You narrate an animated system-design diagram like a friendly senior engineer talking to a colleague. For each step below, write ONE short spoken sentence (under 18 words), conversational, present tense, no file paths, no numbering. Mention the AWS component by its plain name. Steps:\n${seqNow.map((x, k) => `${k + 1}. [${x.kind}] ${x.from} -> ${x.to}: ${x.title}${x.detail ? ' (' + x.detail + ')' : ''}`).join('\n')}\nReturn a JSON array of exactly ${seqNow.length} strings.`, { modelTier: 'quick', signal });
+    if (Array.isArray(lines) && lines.length === seqNow.length && ARCH?.S.seq === seqNow) ARCH.lines = lines.map(String);
+  } catch (e) { /* keep the built-in narration */ }
+}
+
+// Built-in brief from the trace and live metrics, shown for every trace.
+function localBrief(t, S) {
+  const c = t.compute[0], m = byName[c], db = byName[M?.primaryDb];
+  const stores = [...new Set(S.seq.filter((s) => s.from !== s.to && !['client', 'alb', 'dns', 'fe', 'task'].includes(s.to)).map((s) => ({ aurora: 'Aurora Postgres', valkey: 'the cache', cognito: 'Cognito', sqs: 'SQS', ses: 'SES', s3: 'S3', internet: 'an external API' }[s.to] || s.to.replace(/^svc:|^aws:/, ''))))];
+  const risks = [];
+  if (m?.lvl) risks.push(`${c}: ${m.note}.`);
+  if (S.seq.some((s) => s.to === 'aurora') && db?.lvl) risks.push(`${db.n}: ${db.note}, so database calls on this path can slow down at peak.`);
+  if (S.fe && byName[S.fe.ec2]) risks.push(`The page comes from a single EC2 server (${S.fe.ec2}). If it goes down, users can't reach this page.`);
+  t.queues.filter((q) => q.backlog > 0).forEach((q) => risks.push(`${q.n} has ${q.backlog} message(s) waiting.`));
+  if (c && m && m.kind === 'ecs' && !m.lvl) risks.push(`${c} runs as a single task, so there is no spare copy if it restarts.`);
+  const cond = S.seq.filter((s) => s.kind === 'cond').length, asy = S.seq.filter((s) => s.kind === 'async').length;
+  return [`${t.r.m} ${t.r.p} enters through ${t.edge ? t.edge.lb : 'an internal call'} and runs on ${c || 'an undeployed service'}${m ? ` (${fmt(m.cpu)}% CPU${m.mem != null ? ', ' + fmt(m.mem) + '% memory' : ''})` : ''}.`,
+    stores.length ? `It talks to ${stores.join(', ')}.` : 'It does not call any data store.',
+    `${S.seq.length} steps${cond ? `, ${cond} only under some conditions` : ''}${asy ? `, ${asy} in the background after the response` : ''}.`,
+    risks.length ? '\nWatch:\n• ' + risks.slice(0, 3).join('\n• ') : ''].filter(Boolean).join('\n');
+}
+function setAnalyst(mode, err) {
+  if (!ARCH) return;
+  const brief = localBrief(ARCH.t, ARCH.S);
+  if (mode === 'error') {
+    const why = { not_granted: 'Claude access was declined for this page. Allow it from the page’s Permissions menu to get the deeper write-up.', rate_limited: 'Claude is busy right now. Try Ask Claude again in a minute.' }[err?.code] || `Claude did not answer (${err?.code || err?.message || 'unknown error'}).`;
+    $('#ai-state').textContent = err?.code === 'not_granted' ? 'off' : 'built-in';
+    $('#narr').textContent = brief + '\n\n' + why;
+  } else {
+    $('#ai-state').textContent = 'built-in';
+    $('#narr').textContent = brief;
+  }
+}
+async function askClaudeNow() {
+  if (!ARCH) return;
+  const sample = await getSample().catch(() => null);
+  if (!sample) { setAnalyst('error', { message: 'Claude is not available in this view' }); return; }
+  askCtl?.abort(); askCtl = new AbortController();
+  await analyze(`Explain ${ARCH.t.r.m} ${ARCH.t.r.p}`, [], sample, askCtl.signal);
+}
+function describeTrace(t) {
+  const c = t.compute?.[0], m = byName[c];
+  return [`Route: ${t.r.m} ${t.r.p} — ${t.r.t}: ${t.r.d}`, `Entry: ${t.edge ? `${t.edge.lb} (${t.edge.scheme}) rule ${t.edge.when}` : 'no load balancer rule found'}`,
+    `Queues: ${t.queues.map((q) => `${q.n} (${q.sent} sent/3d, backlog ${q.backlog})`).join('; ') || 'none'}`, `Compute: ${c || 'not deployed'}${m ? ` (${m.size}, CPU ${fmt(m.cpu)}%, memory ${fmt(m.mem)}%${m.note ? ', note: ' + m.note : ''})` : ''}`,
+    `Code files: ${t.touch.map((f) => D.files[f].p + (D.files[f].x.length ? ' [' + D.files[f].x.join(',') + ']' : '')).join('; ')}`,
+    `Downstream services: ${t.downstream.map((d) => (PLACEMENT[d.root]?.compute?.[0] || d.root) + ' via ' + d.calls.map((x) => x.label).join(',')).join('; ') || 'none'}`,
+    `External systems: ${t.ext.map((x) => EXTERNAL[x]?.n + ' (' + EXTERNAL[x]?.r + ')').join(', ') || 'none'}`,
+    `Database: ${M?.primaryDb || 'unknown'}${byName[M?.primaryDb] ? ` (${fmt(byName[M.primaryDb].cpu)}% of capacity${byName[M.primaryDb].note ? ', ' + byName[M.primaryDb].note : ''})` : ''}`,
+    `Sequence: ${buildSeq(t).seq.map((x, i) => `${i + 1}. [${x.kind}] ${x.title}`).join(' | ')}`].join('\n');
+}
+function traceAndDraw(i) { askCtl?.abort(); const t = traceRoute(i); drawArch(t); setAnalyst('built-in'); document.querySelectorAll('.cand').forEach((c) => c.setAttribute('aria-pressed', +c.dataset.route === i)); return t; }
+function renderCands(list, active) {
+  $('#cands').innerHTML = list.map((i) => { const r = D.routes[i]; return `<button class="cand" data-route="${+i}" aria-pressed="${i === active}"><span class="verb ${esc(r.m)}">${esc(r.m)}</span><span class="rp">${esc(r.p)}</span><span class="hint">${esc(r.t)}</span></button>`; }).join('');
+}
+
+// ---------- system-design trace ----------
+let F = {}; // route index -> ordered calls from static analysis: [depth, kind, label, fileIdx, line, cond]
+const MANAGED = { Cognito: 'cognito', SQS: 'sqs', SES: 'ses', S3: 'S3', 'Secrets Manager': 'secrets', Lambda: 'lambda' };
+const hostOf = (edge) => { const m = edge?.when.match(/host-header=([^ &]+)/); if (!m) return null; const hs = m[1].split(','); return hs.find((h) => !h.includes('*') && !h.includes('.dev.')) || hs[0]; };
+function frontendFor(edge, host) {
+  const lb = A?.lb.find((l) => l.n === edge?.lb);
+  const r = lb?.routes.find((x) => host && x.when.includes(host) && !x.when.includes('path-pattern') && !x.services.length && TG_HOST[x.tg]);
+  return r ? { ec2: TG_HOST[r.tg], tg: r.tg, when: r.when } : null;
+}
+function resolveHttp(label) {
+  const m = label.match(/^HTTP (\w+) (.*)$/); if (!m) return null;
+  const norm = (p) => p.replace(/\{[^}]*\}|\{…\}/g, '').replace(/^https?:\/\/[^/]+/, '').replace(/\/+$/, '');
+  const tail = norm(m[2]); if (tail.length < 4) return null;
+  const i = D.routes.findIndex((r) => r.m === m[1] && norm(r.p).endsWith(tail));
+  if (i < 0) return null;
+  const fp = D.files[D.routes[i].f].p, pl = PLACEMENT[serviceRoot(fp)]; if (!pl) return null;
+  const f2 = fp.replace(/_/g, '-');
+  return { route: i, compute: pl.compute.find((x) => f2.includes(x.split('-').slice(-2).join('-'))) || pl.compute[0] };
+}
+function targetNode(kind, label) {
+  if (kind === 'sql') return { id: 'aurora', desc: `Database${M?.primaryDb ? ' (' + M.primaryDb + ')' : ''}.` };
+  if (kind === 'cache') return { id: 'valkey', desc: 'Cache (ElastiCache).' };
+  if (kind === 'queue') return { id: 'sqs', desc: 'Message is queued for a background worker.' };
+  if (kind === 'llm') { const gw = INFRA.find((r) => r.kind === 'ecs' && r.env === 'prod' && /llm|model|ai-?gateway/i.test(r.n)); return gw ? { id: 'svc:' + gw.n, desc: 'AI model gateway, which calls the model provider.' } : { id: 'internet', desc: 'Calls an AI model provider over the internet.' }; }
+  if (kind === 'aws') { const svc = label.split(':')[0]; return { id: MANAGED[svc] || 'aws:' + svc, desc: `AWS managed service: ${svc}.` }; }
+  if (kind === 'http') { const r = resolveHttp(label); return r ? { id: 'svc:' + r.compute, route: r.route, label: r.compute, desc: `Internal call to ${r.compute}.` } : { id: 'internet', desc: 'Outbound call to an external API through the NAT gateway.' }; }
+  return { id: 'aws:other', desc: '' };
+}
+
+function buildSeq(t) {
+  const host = hostOf(t.edge), seq = [];
+  const add = (from, to, kind, title, detail = '', code = '', why = '', via = '') => {
+    const last = seq[seq.length - 1];
+    if (last && last.from === from && last.to === to && last.kind === kind && from !== to && kind !== 'ret' && (last.why || '') === why && last.title.split(':')[0] === title.split(':')[0]) {
+      last.n = (last.n || 1) + 1; last.title = `${title.split(':')[0]}: ${last.n} calls`; last.parts = [...(last.parts || [last.first]), title.split(': ').slice(1).join(': ')];
+      last.detail = last.parts.join(' → '); return;
+    }
+    seq.push({ from, to, kind, title, detail, code, why, via, first: title.split(': ').slice(1).join(': ') });
+  };
+  const fe = frontendFor(t.edge, host);
+  if (host) add('client', 'dns', 'sync', `Resolve ${host}`, 'DNS returns the public address of the load balancer.');
+  if (fe) {
+    add('client', 'alb', 'sync', `GET https://${host}/`, 'The browser opens the page.');
+    add('alb', 'fe', 'sync', `Rule: ${fe.when.replace('host-header=', 'host ')}`, `Forwarded to target group ${fe.tg} on EC2 ${fe.ec2}.`);
+    add('fe', 'client', 'ret', `${fe.ec2} serves the page`, 'HTML and scripts load; the user fills in the form and submits.');
+  }
+  add('client', t.edge ? 'alb' : 'task', 'sync', `${t.r.m} ${host ? 'https://' + host : ''}${t.r.p}`, [t.r.t, t.r.d].filter(Boolean).join('. '));
+  if (t.edge) add('alb', 'task', 'sync', `Rule: ${t.edge.when.replace(/host-header=/g, 'host ').replace(/path-pattern=/g, 'path ')}`, `Forwarded to ECS service ${t.compute[0]}.`);
+  add('task', 'task', 'sync', `Handler runs: ${D.files[t.r.f].p.split('/').pop()}:${t.r.l}`, D.files[t.r.f].t, D.files[t.r.f].p + ':' + t.r.l);
+  const followed = new Set(), queued = new Set();
+  (F[t.ri] || []).forEach(([, k, lab, fi, ln, c, why = '', via = '']) => {
+    if (k === 'call') return;
+    const tn = targetNode(k, lab), kind = c ? 'cond' : 'sync';
+    const q = condClause(why, c), pre = c ? `Only ${q.cond}${q.purpose ? ` (${q.purpose})` : ''}. ` : '';
+    add('task', tn.id, kind, lab, pre + (via ? `In ${via}. ` : '') + tn.desc, fi >= 0 ? `${D.files[fi].p}:${ln}` : '', c ? why || (c === 2 ? 'it fails' : '') : '', via);
+    if (tn.id === 'sqs') queued.add('sqs');
+    if (tn.route != null && !followed.has(tn.route)) {
+      followed.add(tn.route);
+      (F[tn.route] || []).filter((s) => s[1] !== 'call').slice(0, 6).forEach(([, k2, l2, f2, ln2, c2, why2 = '', via2 = '']) => {
+        const t2 = targetNode(k2, l2); if (t2.id === tn.id || t2.route != null) return;
+        if (t2.id === 'sqs') queued.add('sqs');
+        add(tn.id, t2.id, c2 ? 'cond' : 'sync', l2, `${c2 ? `Only ${condClause(why2, c2).cond}${condClause(why2, c2).purpose ? ` (${condClause(why2, c2).purpose})` : ''}. ` : ''}Inside ${tn.label}. ${t2.desc}`, f2 >= 0 ? `${D.files[f2].p}:${ln2}` : '', c2 ? why2 || (c2 === 2 ? 'it fails' : '') : '', via2);
+      });
+    }
+  });
+  add('task', 'client', 'ret', `Response returns to the client`, t.edge ? `Back through ${t.edge.lb}.` : '');
+  const qs = queued.size ? t.queues : (t.r.m !== 'GET' ? t.queues.filter((q) => QUEUE_WORKER[q.n]) : []);
+  if (qs.length && !queued.size) seq.splice(seq.length - 1, 0, { from: 'task', to: 'sqs', kind: 'cond', title: `Enqueue job: ${qs.map((q) => q.n).join(', ')}`, detail: 'Inferred: this service writes to these queues; the exact call is behind a helper.' });
+  const seenWorker = new Set();
+  qs.forEach((q) => {
+    const w = QUEUE_WORKER[q.n]; if (!w || seenWorker.has(w[0])) return; seenWorker.add(w[0]);
+    const inferred = !queued.size;
+    add('sqs', 'svc:' + w[0], 'async', `${w[0]} consumes ${q.n}`, `${inferred ? 'Inferred from the service’s queue use. ' : ''}${q.sent} messages in 3 days, backlog ${q.backlog}.`);
+    const tn = targetNode(w[1].startsWith('SES') ? 'aws' : 'sql', w[1]);
+    add('svc:' + w[0], tn.id, 'async', w[1], 'Background job after the response.');
+  });
+  return { seq, fe, host, queues: qs };
+}
+
+function layoutArch(t, S) {
+  const used = new Set(S.seq.flatMap((s) => [s.from, s.to]));
+  const W = 1300, nodes = {};
+  const svcIds = [...used].filter((u) => u.startsWith('svc:'));
+  const managed = [...used].filter((u) => ['cognito', 'sqs', 'ses', 's3', 'secrets', 'lambda'].includes(u) || u.startsWith('aws:'));
+  const calls = (F[t.ri] || []).filter((s) => s[1] === 'call' && s[0] <= 1).slice(0, 9);
+  const taskH = 112 + (Math.min(calls.length, 9) + 1) * 17;
+  const H = Math.max(660, 260 + taskH + svcIds.length * 74, 420 + managed.length * 82);
+  const put = (id, x, y, w, h, kind, title, sub, extra = {}) => (nodes[id] = { id, x, y, w, h, kind, title, sub, ...extra });
+  put('client', 24, H / 2 - 34, 124, 68, 'client', 'Client', 'browser / app');
+  if (used.has('internet')) put('internet', 24, H - 110, 124, 60, 'internet', 'External API', 'via NAT gateway');
+  put('dns', 190, 60, 130, 56, 'dns', 'Route 53', S.host || '');
+  if (used.has('alb')) put('alb', 362, H / 2 - 34, 150, 68, 'alb', t.edge.lb, `${t.edge.scheme === 'internal' ? 'internal' : 'public'} ALB · :${t.edge.port}`);
+  if (used.has('fe')) { const r = byName[S.fe.ec2]; put('fe', 545, 100, 250, 58, 'ec2', S.fe.ec2, `EC2 · ${r?.size?.split(' · ')[0] || ''} · CPU ${fmt(r?.cpu)}%`, { lvl: r?.lvl }); }
+  const c = byName[t.compute[0]];
+  put('task', 545, used.has('fe') ? 200 : 136, 250, taskH, 'task', t.compute[0] || 'service', c ? `ECS Fargate · ${c.size} · CPU ${fmt(c.cpu)}%${c.mem != null ? ' · mem ' + fmt(c.mem) + '%' : ''}` : 'not in AWS snapshot', { calls, lvl: c?.lvl });
+  let sy = nodes.task.y + taskH + 26;
+  svcIds.forEach((id) => { const n = id.slice(4), r = byName[n]; put(id, 545, sy, 250, 56, 'svc', n, r ? `ECS · CPU ${fmt(r.cpu)}%${r.mem != null ? ' · mem ' + fmt(r.mem) + '%' : ''}` : 'ECS service', { lvl: r?.lvl }); sy += 72; });
+  const db = byName[M?.primaryDb];
+  if (used.has('aurora')) put('aurora', 830, 110, 162, 70, 'aurora', 'Database', `${M?.primaryDb || 'database'} · ${fmt(db?.cpu)}% of capacity`, { lvl: db?.lvl });
+  if (used.has('valkey')) put('valkey', 830, 220, 162, 62, 'valkey', 'Cache', 'ElastiCache');
+  const mLabel = { cognito: ['Amazon Cognito', 'user pool'], sqs: ['Amazon SQS', S.queues.map((q) => q.n).join(', ') || 'queue'], ses: ['Amazon SES', 'email delivery'], s3: ['Amazon S3', 'buckets'], secrets: ['Secrets Manager', 'secrets'], lambda: ['AWS Lambda', 'functions'] };
+  managed.forEach((id, i) => put(id, 1050, 330 + i * 82, 220, 62, id.startsWith('aws:') ? 'aws' : id, (mLabel[id] || [id.slice(4)])[0], (mLabel[id] || ['', 'AWS service'])[1]));
+  return { nodes, W, H };
+}
+
+const ICON = {
+  client: '<rect x="2" y="3" width="18" height="12" rx="2"/><path d="M8 19h6M11 15v4"/>',
+  internet: '<circle cx="11" cy="11" r="9"/><path d="M2 11h18M11 2c3 3 3 15 0 18M11 2c-3 3-3 15 0 18"/>',
+  dns: '<circle cx="11" cy="11" r="9"/><path d="M2 11h18M11 2v18"/>',
+  alb: '<circle cx="11" cy="11" r="9"/><path d="M5 11h5M10 11l6-5M10 11h7M10 11l6 5"/>',
+  ec2: '<rect x="4" y="4" width="14" height="14" rx="2"/><path d="M8 1v3M14 1v3M8 18v3M14 18v3M1 8h3M1 14h3M18 8h3M18 14h3"/>',
+  task: '<path d="M11 2l8 4.5v9L11 20l-8-4.5v-9z"/><path d="M11 11l8-4.5M11 11v9M11 11L3 6.5"/>',
+  svc: '<path d="M11 2l8 4.5v9L11 20l-8-4.5v-9z"/>',
+  aurora: '<ellipse cx="11" cy="5" rx="8" ry="3"/><path d="M3 5v12c0 1.7 3.6 3 8 3s8-1.3 8-3V5M3 11c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
+  valkey: '<path d="M11 2l9 9-9 9-9-9z"/><path d="M7 11h8"/>',
+  cognito: '<path d="M11 2l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V5z"/><path d="M8 11l2 2 4-4"/>',
+  sqs: '<rect x="3" y="4" width="16" height="4" rx="1"/><rect x="3" y="9" width="16" height="4" rx="1"/><rect x="3" y="14" width="16" height="4" rx="1"/>',
+  ses: '<rect x="2" y="5" width="18" height="12" rx="2"/><path d="M2 6l9 6 9-6"/>',
+  s3: '<path d="M3 5h16l-2 14H5z"/><ellipse cx="11" cy="5" rx="8" ry="2"/>',
+  secrets: '<rect x="4" y="9" width="14" height="10" rx="2"/><path d="M7 9V6a4 4 0 0 1 8 0v3"/>',
+  lambda: '<path d="M5 19l5-9-3-6h3l8 15h-3l-4-8-3 8z"/>', aws: '<rect x="3" y="3" width="16" height="16" rx="3"/>',
+};
+const KCOLOR = { client: 'var(--blue)', internet: 'var(--muted)', dns: 'var(--violet)', alb: 'var(--violet)', ec2: 'var(--amber)', task: 'var(--signal)', svc: 'var(--signal)',
+  aurora: 'var(--blue)', valkey: 'var(--red)', cognito: 'var(--red)', sqs: 'var(--amber)', ses: 'var(--signal)', s3: 'var(--signal)', secrets: 'var(--red)', lambda: 'var(--amber)', aws: 'var(--muted)' };
+
+let ARCH = null, cur = -1, playing = null;
+function drawArch(t) {
+  const S = buildSeq(t), L = layoutArch(t, S), { nodes, W, H } = L;
+  const g = [];
+  const zone = (x, y, w, h, label, color, dash = '') => g.push(`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="12" fill="none" stroke="${color}" stroke-width="1.2" ${dash ? `stroke-dasharray="${dash}"` : ''}/><text class="zone-t" x="${x + 14}" y="${y + 20}" fill="${color}">${label}</text>`);
+  zone(170, 22, W - 186, H - 40, `AWS Cloud · ${esc(M?.meta.region || '')}`, 'var(--muted)');
+  zone(336, 40, 680, H - 76, 'VPC', 'var(--violet)');
+  zone(350, 68, 176, H - 118, 'Public subnet', 'var(--signal)', '5 4');
+  zone(532, 68, 278, H - 118, 'Private subnet · app', 'var(--blue)', '5 4');
+  zone(818, 68, 186, H - 118, 'Private subnet · data', 'var(--blue)', '5 4');
+  zone(1036, 48, 248, H - 84, 'AWS managed services', 'var(--amber)', '2 4');
+  if (nodes.task) g.push(`<rect x="${nodes.task.x - 8}" y="${nodes.task.y - 26}" width="${nodes.task.w + 16}" height="${nodes.task.h + 34}" rx="10" fill="none" stroke="var(--signal)" stroke-opacity=".5" stroke-dasharray="3 3"/><text class="zone-t" x="${nodes.task.x}" y="${nodes.task.y - 10}" fill="var(--signal)">ECS cluster · ${esc(byName[t.compute[0]]?.cluster || '')}</text>`);
+  // arrows (drawn under nodes)
+  const pairCount = {};
+  S.seq.forEach((s, i) => {
+    if (s.from === s.to) { s.path = null; return; }
+    const a = nodes[s.from], b = nodes[s.to]; if (!a || !b) { s.path = null; return; }
+    const key = [s.from, s.to].sort().join('|'), k = (pairCount[key] = (pairCount[key] || 0) + 1) - 1;
+    const off = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 14;
+    let x1, y1, x2, y2;
+    if (b.x > a.x + a.w) { x1 = a.x + a.w; x2 = b.x; } else if (a.x > b.x + b.w) { x1 = a.x; x2 = b.x + b.w; } else { x1 = a.x + a.w / 2 + off; x2 = b.x + b.w / 2 + off; }
+    y1 = a.y + a.h / 2 + off; y2 = b.y + b.h / 2 + off;
+    if (x1 === a.x + a.w / 2 + off) { y1 = b.y > a.y ? a.y + a.h : a.y; y2 = b.y > a.y ? b.y : b.y + b.h; }
+    const mx = (x1 + x2) / 2;
+    const d = s.kind === 'ret' && s.to === 'client' ? `M${x1},${y1 + 18} C${x1 - 60},${H - 60} ${x2 + 160},${H - 60} ${x2},${y2 + 18}` :
+      Math.abs(x2 - x1) < 2 ? `M${x1},${y1} L${x2},${y2}` : `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
+    s.path = d;
+    g.push(`<path class="arr ${s.kind}" id="arr-${i}" d="${d}" marker-end="url(#ah-${s.kind})"><title>${i + 1}. ${esc(s.title)}</title></path>`);
+  });
+  Object.values(nodes).forEach((n) => {
+    const col = n.lvl === 'bad' ? 'var(--red)' : n.lvl === 'warn' ? 'var(--amber)' : KCOLOR[n.kind] || 'var(--ink)';
+    const cap = (s, px) => { const m = Math.floor((n.w - 52) / px); return s.length > m ? s.slice(0, m - 1) + '…' : s; };
+    const ttl = cap(n.title, 7.6), sub = cap(n.sub || '', 6.4);
+    let inner = '';
+    if (n.kind === 'task') {
+      inner = `<line x1="${n.x + 12}" x2="${n.x + n.w - 12}" y1="${n.y + 62}" y2="${n.y + 62}" stroke="var(--line)"/><text x="${n.x + 14}" y="${n.y + 80}" fill="var(--muted)" font-size="10" letter-spacing="1.5">CODE PATH</text>` +
+        [[0, 'call', D.files[t.r.f].p.split('/').pop() + ':' + t.r.l]].concat(n.calls.map((c) => [c[0] + 1, 'call', c[2]])).slice(0, 10)
+          .map(([dp, , lab], i) => `<text x="${n.x + 16 + dp * 12}" y="${n.y + 98 + i * 17}" fill="${i ? 'var(--ink)' : 'var(--signal)'}" font-size="11">${dp ? '└ ' : '▸ '}${esc(lab.length > 30 ? lab.slice(0, 29) + '…' : lab)}</text>`).join('');
+    }
+    g.push(`<g class="nd" id="nd-${esc(n.id)}" ${byName[n.title] ? `data-res="${esc(n.title)}" style="cursor:pointer"` : ''}>
+      <rect class="box" x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="9" fill="var(--panel)" stroke="${col}" stroke-width="1.3"/>
+      <g transform="translate(${n.x + 12},${n.y + 12})" fill="none" stroke="${col}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${ICON[n.kind] || ICON.aws}</g>
+      <text x="${n.x + 44}" y="${n.y + 24}" fill="var(--ink)" font-size="12.5" font-weight="500">${esc(ttl)}</text>
+      <text x="${n.x + 44}" y="${n.y + 41}" fill="var(--muted)" font-size="10.5">${esc(sub)}</text>${inner}</g>`);
+  });
+  const marker = (k, c) => `<marker id="ah-${k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="${c}"/></marker>`;
+  $('#svgwrap').innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="System design of ${esc(t.r.m + ' ' + t.r.p)}"><defs>${marker('sync', 'var(--signal)')}${marker('ret', 'var(--blue)')}${marker('cond', 'var(--amber)')}${marker('async', 'var(--violet)')}</defs>
+    <rect width="${W}" height="${H}" fill="var(--bg)"/>${g.join('')}<g id="badges"></g><circle id="packet" r="6" fill="var(--signal)" opacity="0" style="filter:drop-shadow(0 0 6px var(--signal))"/></svg>`;
+  // number badges at each arrow's midpoint
+  const badges = S.seq.map((s, i) => {
+    let p;
+    if (s.path) { const el = document.getElementById('arr-' + i); const len = el.getTotalLength(); p = el.getPointAtLength(len * (s.kind === 'ret' && s.to === 'client' ? 0.5 : 0.45)); }
+    else { const n = nodes[s.from]; p = { x: n.x + n.w - 14, y: n.y + 72 }; }
+    const col = { sync: 'var(--signal)', ret: 'var(--blue)', cond: 'var(--amber)', async: 'var(--violet)' }[s.kind];
+    return `<g class="badge" id="bd-${i}" data-step="${i}" style="cursor:pointer"><circle cx="${p.x}" cy="${p.y}" r="10" fill="var(--panel)" stroke="${col}"/><text x="${p.x}" y="${p.y + 3.5}" text-anchor="middle" fill="${col}">${i + 1}</text></g>`;
+  }).join('');
+  document.getElementById('badges').innerHTML = badges;
+  $('#steps').innerHTML = S.seq.map((s, i) => `<li class="${s.kind}" data-step="${i}" id="st-${i}"><span class="no">${i + 1}</span><div><b>${esc(s.title)}</b>${s.detail ? `<p>${esc(s.detail)}</p>` : ''}${s.code ? `<p><code>${esc(s.code)}</code></p>` : ''}</div></li>`).join('');
+  $('#trace-title').textContent = `${t.r.m} ${t.r.p}`;
+  $('#trace-sub').textContent = `${t.r.t} · ${S.seq.length} steps · ${S.seq.filter((s) => s.kind === 'cond').length} conditional · ${S.seq.filter((s) => s.kind === 'async').length} async`;
+  ARCH = { S, t }; cur = -1; stopPlay(); $('#stepnow').textContent = `Step — of ${S.seq.length}`;
+}
+function focusStep(i, animate = true) {
+  if (!ARCH) return;
+  const S = ARCH.S; cur = Math.max(0, Math.min(S.seq.length - 1, i));
+  const s = S.seq[cur];
+  document.querySelectorAll('.arr').forEach((el) => { const on = el.id === 'arr-' + cur; el.classList.toggle('hot', on); el.classList.toggle('dim', !on); });
+  document.querySelectorAll('.nd').forEach((el) => { const id = el.id.slice(3); const on = id === s.from || id === s.to; el.classList.toggle('hot', on); el.classList.toggle('dim', !on); });
+  document.querySelectorAll('.seq li').forEach((el) => el.classList.toggle('on', +el.dataset.step === cur));
+  const li = document.getElementById('st-' + cur), list = $('#steps');
+  if (li && list) list.scrollTop = Math.max(0, li.offsetTop - list.clientHeight / 3); // scroll the list only, never the page
+  showCaption(cur);
+  $('#stepnow').textContent = `Step ${cur + 1} of ${S.seq.length}`;
+  const pk = document.getElementById('packet'), path = document.getElementById('arr-' + cur);
+  if (!pk) return;
+  if (!path || !animate || matchMedia('(prefers-reduced-motion: reduce)').matches) { pk.setAttribute('opacity', '0'); return; }
+  const len = path.getTotalLength(), t0 = performance.now(), dur = 750;
+  pk.setAttribute('fill', getComputedStyle(path).stroke); pk.setAttribute('opacity', '1');
+  const tick = (now) => { const k = Math.min(1, (now - t0) / dur), p = path.getPointAtLength(len * k); pk.setAttribute('cx', p.x); pk.setAttribute('cy', p.y); if (k < 1 && cur === i) requestAnimationFrame(tick); else if (k >= 1) pk.setAttribute('opacity', '0.0'); };
+  requestAnimationFrame(tick);
+}
+function clearFocus() { document.querySelectorAll('.arr,.nd').forEach((el) => el.classList.remove('hot', 'dim')); document.querySelectorAll('.seq li').forEach((el) => el.classList.remove('on')); }
+// ---------- narrator ----------
+const COGNITO_SAY = {
+  InitiateAuth: 'asks Cognito to check the email and password', GetUser: 'pulls the user’s profile from Cognito',
+  AdminAddUserToGroup: 'adds the user to a Cognito group', ResendConfirmationCode: 'asks Cognito to send the confirmation code again',
+  SignUp: 'creates the account in Cognito', ConfirmSignUp: 'asks Cognito to confirm the email code', ForgotPassword: 'asks Cognito to email a reset code',
+  ConfirmForgotPassword: 'sets the new password in Cognito', AdminGetUser: 'looks the user up in Cognito', AdminCreateUser: 'creates the user in Cognito',
+};
+const upper = (x) => x.charAt(0).toUpperCase() + x.slice(1);
+// "Forward incoming email to manager if configured" -> { purpose: 'forward incoming email to manager', cond: 'if configured' }
+function condClause(why, c) {
+  const w = (why || '').trim();
+  if (!w) return { purpose: '', cond: c === 2 ? 'if it fails' : 'under some conditions' };
+  const m = w.match(/^(.*?)\b(if|when|unless)\b\s+(.+)$/i);
+  if (m && m[1].trim()) return { purpose: m[1].trim().replace(/^./, (x) => x.toLowerCase()), cond: `${m[2].toLowerCase()} ${m[3]}` };
+  if (m) return { purpose: '', cond: `${m[2].toLowerCase()} ${m[3]}` };
+  const lc = w.replace(/^./, (x) => x.toLowerCase());
+  // "user id is set" -> "the user id is set"; leave "it is…", "a … error", "there is…", "we have…" alone.
+  return { purpose: '', cond: 'if ' + (/^(it|a|an|the|there|we|this|that|no)\b/.test(lc) ? lc : 'the ' + lc) };
+}
+const humanTable = (s) => s.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
+function narrate(s, i, S, t) {
+  const host = S.host || 'the service', svc = t.compute[0] || 'the service';
+  const api = (s.first || s.title).split(': ').pop();
+  if (s.from === 'client' && s.to === 'dns') return `Let’s follow this request. First, the browser asks Route 53 where ${host} lives.`;
+  if (s.from === 'client' && s.to === 'alb' && S.fe && i < 3) return `It reaches our public load balancer and asks for the page.`;
+  if (s.from === 'alb' && s.to === 'fe') return `The load balancer sees the host name and sends it to the ${S.fe.ec2} server.`;
+  if (s.from === 'fe') return `${S.fe.ec2} sends the page back. The user fills it in and hits submit.`;
+  if (s.from === 'client') return `Now the real call: a ${t.r.m} to ${t.r.p}.`;
+  if (s.from === 'alb' && s.to === 'task') return S.fe ? `This time the path matches the API rule, so it goes to the ${svc} container.` : `The load balancer matches the rule and hands it to the ${svc} container.`;
+  if (s.from === 'task' && s.to === 'task') return `Inside the container, the handler in ${D.files[t.r.f].p.split('/').pop()} takes over.`;
+  if (s.kind === 'ret' && s.to === 'client') return S.seq.some((x) => x.kind === 'async') ? `The response goes back to the browser. The user is done, but work carries on in the background.` : `And the response heads back to the browser. That’s the whole round trip.`;
+  if (s.kind === 'async' && s.from === 'sqs') return `Meanwhile, ${s.to.slice(4)} picks the message off the queue.`;
+  if (s.kind === 'async') return s.to === 'ses' ? `It sends the email out through SES.` : s.to === 'aurora' ? `It records the result in the database. Job done.` : `It finishes the job.`;
+  const who = s.from.startsWith('svc:') ? s.from.slice(4) : 'it';
+  const body = action(s, i, S, api, who);
+  if (s.kind !== 'cond') return upper(body) + '.';
+  // Say why the step runs: the developer's comment or the condition from the code.
+  const { purpose, cond } = condClause(s.why, s.why ? 1 : 0);
+  // Add "to <function>" only when it says something the action doesn't already, and stays short.
+  const viaWords = (s.via || '').split(' ').filter((x) => x.length > 3);
+  const viaPurpose = !purpose && s.via && s.via.length <= 32 && !/^(process|handle|run|main|send|get)$/.test(s.via) && !viaWords.some((x) => body.toLowerCase().includes(x.toLowerCase().replace(/s$/, ''))) ? s.via : '';
+  const lead = purpose ? `To ${purpose}, ${cond}` : cond;
+  return `${upper(lead)}, ${body}${viaPurpose ? `, to ${viaPurpose}` : ''}.`;
+}
+// What a step does, as a clause starting with its subject ("it reads a file from S3").
+function action(s, i, S, api, who) {
+  if (s.to === 'aurora') {
+    const tb = [...new Set((s.parts || [api]).map((p) => p.replace(/^(SELECT by id|SELECT|INSERT|UPDATE|DELETE|UPSERT|query)\s*/i, '').replace(/\+ commit/, '').trim()).filter(Boolean).map(humanTable))];
+    const writes = (s.parts || [api]).some((p) => /INSERT|UPDATE|DELETE|commit/i.test(p));
+    const what = tb.length ? `the ${tb.slice(0, 2).join(' and ')}` : '';
+    const nth = S.seq.slice(0, i).filter((x) => x.to === 'aurora').length;
+    const line = writes ? (what ? `${who} saves ${what} to the database` : `${who} writes ${nth ? 'the result back ' : ''}to the database`)
+      : what ? `${who} looks up ${what} in the database` : `${who} ${nth ? 'makes another database read' : 'reads from the database'}`;
+    return line + (s.n > 2 ? `, ${s.n} queries in a row` : '');
+  }
+  const AWS_SAY = {
+    GetObject: 'reads a file from S3', PutObject: 'stores a file in S3', UploadFileobj: 'uploads a file to S3', GeneratePresignedUrl: 'creates a download link for a file in S3',
+    SendRawEmail: 'sends an email through SES', SendEmail: 'sends an email through SES', SendMessage: 'drops a message on the queue for later',
+  };
+  if (s.to === 'cognito') return `${who} ${COGNITO_SAY[api] || `calls Cognito (${api})`}`;
+  if (s.to === 'valkey') return `${who} checks the cache`;
+  if (s.to === 'sqs') return `${who} drops a message on the queue for later`;
+  if (AWS_SAY[api]) return `${who} ${AWS_SAY[api]}`;
+  if (s.to.startsWith('svc:')) return `${who} calls ${s.to.slice(4)}`;
+  if (s.to === 'internet') return /other service/.test(s.title) ? `${who} calls another service over HTTP` : `${who} calls an external API on the internet`;
+  return `${who} calls ${s.title}`;
+}
+let VOICE = true;
+try { VOICE = localStorage.getItem('ops-voice') !== 'off'; } catch (e) { /* storage unavailable: keep default */ }
+const synth = typeof window.speechSynthesis !== 'undefined' ? window.speechSynthesis : null;
+// Narrator voices: natural-sounding English voices first, novelty voices hidden.
+const NOVELTY = /Albert|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Wobble|Good News|Jester|Organ|Superstar|Trinoids|Whisper|Zarvox|Fred|Junior|Ralph|Kathy|Grandma|Grandpa|Eddy|Rocko|Shelley|Sandy|Reed/i;
+const voiceScore = (v) => (/Premium|Natural|Neural/i.test(v.name) ? 100 : 0) + (/Enhanced|Online/i.test(v.name) ? 60 : 0) + (/Google/i.test(v.name) ? 40 : 0)
+  + (/Samantha|Ava|Zoe|Evan|Allison|Susan|Nathan|Tom|Aria|Jenny|Guy|Sonia|Libby|Ryan|Daniel|Karen|Moira|Tessa|Rishi|Aman|Veena|Serena|Oliver/i.test(v.name) ? 20 : 0)
+  + (v.lang === 'en-US' ? 6 : v.lang === 'en-GB' ? 5 : v.lang === 'en-IN' ? 4 : 2) + (v.localService ? 3 : 0);
+let VOICE_NAME = '', VOICE_RATE = 1.04;
+try { VOICE_NAME = localStorage.getItem('ops-voice-name') || ''; VOICE_RATE = +(localStorage.getItem('ops-voice-rate') || 1.04); } catch (e) { /* storage unavailable */ }
+function englishVoices() { return (synth?.getVoices() || []).filter((v) => /^en/i.test(v.lang) && !NOVELTY.test(v.name)).sort((a, b) => voiceScore(b) - voiceScore(a)); }
+function pickVoice() { const vs = englishVoices(); return vs.find((v) => v.name === VOICE_NAME) || vs[0] || null; }
+const ACCENT = { 'en-US': 'US', 'en-GB': 'UK', 'en-IN': 'India', 'en-AU': 'Australia', 'en-IE': 'Ireland', 'en-ZA': 'South Africa', 'en-CA': 'Canada', 'en-NZ': 'NZ', 'en-SG': 'Singapore' };
+function fillVoices() {
+  const sel = document.getElementById('voice-pick'); if (!sel || !synth) return;
+  const vs = englishVoices(); if (!vs.length) return;
+  const chosen = pickVoice()?.name;
+  sel.innerHTML = vs.map((v) => `<option value="${esc(v.name)}" ${v.name === chosen ? 'selected' : ''}>${esc(v.name.replace(/\s*\(.*\)$/, ''))} · ${ACCENT[v.lang.replace('_', '-')] || v.lang}${voiceScore(v) >= 60 ? ' · natural' : ''}</option>`).join('');
+}
+if (synth) { fillVoices(); synth.addEventListener?.('voiceschanged', fillVoices); }
+function speak(text, token) {
+  return new Promise((done) => {
+    if (!VOICE || !synth) { setTimeout(done, Math.max(1400, text.length * 45)); return; }
+    synth.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    const v = pickVoice(); if (v) u.voice = v;
+    u.rate = VOICE_RATE; u.pitch = 1.0;
+    $('#hud').classList.add('talking');
+    const fin = () => { $('#hud').classList.remove('talking'); done(); };
+    u.onend = fin; u.onerror = fin;
+    synth.speak(u);
+  });
+}
+function lineFor(i) { return ARCH.lines?.[i] || narrate(ARCH.S.seq[i], i, ARCH.S, ARCH.t); }
+function showCaption(i) {
+  const hud = $('#hud'); if (!ARCH) return;
+  hud.hidden = false;
+  $('#hud-step').textContent = `Step ${i + 1} of ${ARCH.S.seq.length} · ${ARCH.S.seq[i].kind === 'async' ? 'background' : ARCH.S.seq[i].kind === 'cond' ? 'conditional' : ARCH.S.seq[i].kind === 'ret' ? 'response' : 'request'}`;
+  $('#hud-line').textContent = lineFor(i);
+}
+let playToken = 0;
+function stopPlay() {
+  playToken++; playing = null; synth?.cancel(); document.getElementById('hud')?.classList.remove('talking');
+  const b = document.getElementById('play'); if (b) b.textContent = '▶ Play request';
+}
+async function play() {
+  if (!ARCH) return;
+  if (playing) { stopPlay(); return; }
+  const token = ++playToken; playing = token;
+  $('#play').textContent = '❚❚ Pause';
+  const stage = document.querySelector('.player');
+  window.scrollTo({ top: stage.getBoundingClientRect().top + window.scrollY - (document.querySelector('.bar')?.offsetHeight || 0) - 8, behavior: 'smooth' });
+  let i = cur >= ARCH.S.seq.length - 1 ? 0 : cur + 1;
+  for (; i < ARCH.S.seq.length; i++) {
+    if (token !== playToken) return;
+    focusStep(i);
+    const t0 = performance.now();
+    await speak(lineFor(i), token);
+    const wait = 500 - (performance.now() - t0);
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  if (token === playToken) stopPlay();
+}
+
+// ---------- ops dashboard ----------
+let T = null; // hourly series and daily cost (ts.json)
+const hourLabel = (i) => { const d = new Date(new Date(T.start).getTime() + i * 3600e3); return d.toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' }); };
+const kfmt = (v) => (v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(v >= 1e4 ? 0 : 1) + 'k' : String(Math.round(v * 100) / 100));
+
+// One-series area/line chart with a crosshair tooltip and an optional limit line.
+function lineChart(el, vals, { color = 'var(--signal)', limit = null, limitLabel = '', unit = '', label = '', yMax = null, h = 130, w = 520, labelFor = hourLabel, valFmt = kfmt, tickFmt = null } = {}) {
+  const W = w, H = h, L = 40, R = 10, Tp = 16, B = 22;
+  const max = yMax ?? (Math.max(limit ?? 0, ...vals) * 1.12 || 1);
+  const x = (i) => L + (i / Math.max(1, vals.length - 1)) * (W - L - R), y = (v) => Tp + (1 - v / max) * (H - Tp - B);
+  const pts = vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const ticks = [0, max / 2, max].map((v) => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)" stroke-dasharray="${v ? '2 4' : ''}"/><text x="${L - 6}" y="${y(v) + 3}" text-anchor="end" fill="var(--muted)" font-size="9.5">${(tickFmt || ((t) => (max > 5 ? kfmt(Math.round(t)) : valFmt(t))))(v)}${unit}</text>`).join('');
+  const days = vals.map((_, i) => i).filter((i) => i % 24 === 0).map((i) => `<text x="${x(i)}" y="${H - 6}" fill="var(--muted)" font-size="9.5">${esc(labelFor(i).split(' ')[0])}</text>`).join('');
+  const lim = limit != null ? `<line x1="${L}" x2="${W - R}" y1="${y(limit)}" y2="${y(limit)}" stroke="var(--red)" stroke-width="1.2" stroke-dasharray="5 4"/><text x="${W - R}" y="${y(limit) - 4}" text-anchor="end" fill="var(--red)" font-size="9.5">${esc(limitLabel)}</text>` : '';
+  const last = vals.length - 1;
+  el.innerHTML = `${label ? `<div class="label" style="margin-bottom:4px">${esc(label)}</div>` : ''}<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label || 'chart')}">${ticks}${days}${lim}
+    <polygon points="${L},${y(0)} ${pts} ${x(last)},${y(0)}" fill="${color}" fill-opacity=".14"/><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>
+    <circle cx="${x(last)}" cy="${y(vals[last])}" r="4" fill="${color}" stroke="var(--panel)" stroke-width="2"/>
+    <line class="xh" x1="0" x2="0" y1="${Tp}" y2="${H - B}" stroke="var(--muted)" stroke-dasharray="2 3" opacity="0"/><circle class="xd" r="4.5" fill="${color}" stroke="var(--panel)" stroke-width="2" opacity="0"/>
+    <rect class="hit" x="${L}" y="0" width="${W - L - R}" height="${H}" fill="transparent"/></svg><div class="tip" hidden></div>`;
+  const svg = el.querySelector('svg'), tip = el.querySelector('.tip'), xh = el.querySelector('.xh'), xd = el.querySelector('.xd');
+  const move = (ev) => {
+    const r = svg.getBoundingClientRect(), px = ((ev.clientX - r.left) / r.width) * W;
+    const i = Math.max(0, Math.min(last, Math.round(((px - L) / (W - L - R)) * last)));
+    xh.setAttribute('x1', x(i)); xh.setAttribute('x2', x(i)); xh.setAttribute('opacity', '1'); xd.setAttribute('cx', x(i)); xd.setAttribute('cy', y(vals[i])); xd.setAttribute('opacity', '1');
+    tip.hidden = false; tip.textContent = `${labelFor(i)} · ${valFmt(vals[i])}${unit}`;
+    tip.style.left = (x(i) / W) * r.width + 'px'; tip.style.top = (y(vals[i]) / H) * r.height + 'px';
+  };
+  svg.querySelector('.hit').addEventListener('pointermove', move);
+  svg.querySelector('.hit').addEventListener('pointerleave', () => { tip.hidden = true; xh.setAttribute('opacity', '0'); xd.setAttribute('opacity', '0'); });
+}
+function spark(vals, color) {
+  const W = 200, H = 36, max = Math.max(...vals) || 1;
+  const pts = vals.map((v, i) => `${(i / (vals.length - 1)) * W},${H - 3 - (v / max) * (H - 6)}`).join(' ');
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><polygon points="0,${H} ${pts} ${W},${H}" fill="${color}" fill-opacity=".14"/><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>`;
+}
+function barChart(el, rows, { color = 'var(--signal)', unit = '', w = 520 } = {}) {
+  const W = w, H = 130, L = 40, R = 10, Tp = 16, B = 22, max = Math.max(...rows.map((r) => r.v)) * 1.15;
+  const bw = (W - L - R) / rows.length;
+  const y = (v) => Tp + (1 - v / max) * (H - Tp - B);
+  const grid = [0, max / 2, max].map((v) => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)" stroke-dasharray="${v ? '2 4' : ''}"/><text x="${L - 6}" y="${y(v) + 3}" text-anchor="end" fill="var(--muted)" font-size="9.5">${unit}${Math.round(v)}</text>`).join('');
+  const peak = rows.reduce((a, r, i) => (r.v > rows[a].v ? i : a), 0);
+  const bars = rows.map((r, i) => { const bx = L + i * bw + 2, bh = y(0) - y(r.v);
+    return `<g><path d="M${bx},${y(0)} v${-(bh - 4)} q0,-4 4,-4 h${bw - 12} q4,0 4,4 v${bh - 4} z" fill="${i === peak ? 'var(--amber)' : color}" fill-opacity="${i === rows.length - 1 ? 1 : .75}"/><rect x="${bx - 2}" y="${Tp}" width="${bw}" height="${H - Tp - B}" fill="transparent"><title>${esc(r.l)} · ${unit}${r.v.toFixed(2)}</title></rect>
+      ${i % 3 === 0 || i === rows.length - 1 ? `<text x="${bx + (bw - 4) / 2}" y="${H - 6}" text-anchor="middle" fill="var(--muted)" font-size="9.5">${esc(r.l.slice(5))}</text>` : ''}</g>`; }).join('');
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Daily spend">${grid}${bars}<text x="${L + peak * bw + bw / 2}" y="${y(rows[peak].v) - 5}" text-anchor="middle" fill="var(--amber)" font-size="9.5">${unit}${rows[peak].v.toFixed(0)} peak</text></svg>`;
+}
+
+function renderOps() {
+  if (!M) return;
+  const s = (T && T.series) || {}, L = (T && T.labels) || {}, sum = (a) => (a || []).reduce((x, y) => x + y, 0);
+  const st = M.status;
+  $('#status-strip').className = 'status-strip ' + st.state;
+  $('#status-strip').innerHTML = `<span class="status-pill ${st.state}"><i></i>${{ bad: 'Degraded', warn: 'Watch', ok: 'Healthy' }[st.state]}</span>
+    <div class="status-why"><b>${esc(st.headline)}</b><span>${esc(st.detail)}</span></div>
+    <span class="label">${esc(M.meta.region)} · last 72 h · collected ${esc(new Date(M.meta.collectedAt).toLocaleString())}</span>`;
+  const gs = (cls, name, val, unit, note, series, color) => `<div class="gs ${cls}"><div class="top"><span class="label">${name}</span></div><b>${val}<span class="unit"> ${unit}</span></b><span class="note">${note}</span>${series && series.length ? spark(series, color) : ''}</div>`;
+  const req = sum(s.req), e5 = sum(s.elb5xx) + sum(s.e5xx), errPct = req ? (e5 / req) * 100 : 0;
+  const dlq = (A?.sqs || []).filter((q) => q.dlq && q.backlog > 0);
+  const capHours = L.dbKind === 'acu' && L.dbMax ? (s.dbcap || []).filter((v) => v >= L.dbMax - 0.01).length : (s.dbcap || []).filter((v) => v >= 90).length;
+  const cost = T?.dailyCost || [], half = Math.floor(cost.length / 2);
+  const wk = (a) => (a.length ? sum(a.map((c) => c.usd)) / a.length : 0), prevW = wk(cost.slice(0, half)), lastW = wk(cost.slice(half));
+  const qsum = (s.q0 || []).map((v, i) => v + (s.q1?.[i] || 0) + (s.q2?.[i] || 0));
+  $('#golden').innerHTML = [
+    L.lb ? gs('', 'Traffic', kfmt(req), 'requests', `${kfmt(req / 72)} per hour on ${esc(L.lb)}`, s.req, 'var(--signal)') : gs('', 'Traffic', '—', '', 'no public load balancer found', null),
+    L.lb ? gs(errPct > 5 ? 'bad' : '', 'Errors', errPct.toFixed(1) + '%', '5xx', `${n0(sum(s.elb503))} × 503 · ${n0(sum(s.e5xx))} from app code`, s.elb5xx, 'var(--red)') : '',
+    L.lb ? gs('', 'Latency', ((Math.max(0, ...(s.p95 || [0]))) * 1000).toFixed(0), 'ms p95', `median ${((Math.max(0, ...(s.p50 || [0]))) * 1000).toFixed(0)} ms`, (s.p95 || []).map((v) => v * 1000), 'var(--blue)') : '',
+    L.db ? gs(capHours > 12 ? 'bad' : '', 'Saturation', `${capHours}/72`, L.dbKind === 'acu' ? 'h at DB limit' : 'h DB CPU ≥ 90%', `${L.mem ? esc(L.mem) + ' memory peak ' + Math.max(0, ...(s.mem || [0])).toFixed(0) + '%' : ''}`, s.dbcap, 'var(--amber)') : '',
+    gs(dlq.length ? 'bad' : '', 'Queues', String(dlq.length), 'DLQs failing', `${n0(sum(qsum))} messages in 72 h on the busiest queues`, qsum, 'var(--violet)'),
+    cost.length ? gs(lastW > prevW * 1.03 ? 'warn' : '', 'Spend', '$' + cost[cost.length - 1].usd.toFixed(0), 'per day', `${lastW >= prevW ? '+' : ''}${prevW ? (((lastW - prevW) / prevW) * 100).toFixed(1) : 0}% week on week · before tax`, cost.map((c) => c.usd), 'var(--signal)') : '',
+  ].join('');
+  const show = (id, ok) => { const el = $(id)?.closest('.panel'); if (el) el.hidden = !ok; };
+  show('#ch-req', !!(s.req && L.lb));
+  if (s.req && L.lb) { $('#lb-label').textContent = `per hour · last 72 h · ${L.lb}`; lineChart($('#ch-req'), s.req, { label: 'Requests per hour', color: 'var(--signal)' });
+    lineChart($('#ch-503'), s.elb503 || [], { label: '503 "no healthy target" errors per hour', color: 'var(--red)', h: 110 }); }
+  show('#ch-acu', !!s.dbcap);
+  if (s.dbcap) { $('#db-label').textContent = `${L.db} · ${L.dbKind === 'acu' ? 'peak ACU' : 'peak CPU %'} / h`;
+    lineChart($('#ch-acu'), s.dbcap, L.dbKind === 'acu' ? { color: 'var(--amber)', limit: L.dbMax, limitLabel: `max capacity ${L.dbMax} ACU`, yMax: (L.dbMax || 2) * 1.2, valFmt: (v) => v.toFixed(2), tickFmt: (v) => v.toFixed(1), w: 340, h: 150 }
+      : { color: 'var(--amber)', limit: 100, limitLabel: 'CPU limit', yMax: 110, unit: '%', valFmt: (v) => v.toFixed(0), w: 340, h: 150 }); }
+  show('#ch-mem', !!s.mem);
+  if (s.mem) { $('#mem-label').textContent = `${L.mem} · peak % / h`; lineChart($('#ch-mem'), s.mem, { color: 'var(--violet)', limit: 100, limitLabel: 'out of memory', yMax: 110, unit: '%', valFmt: (v) => v.toFixed(0), w: 340, h: 150 }); }
+  show('#ch-cost', cost.length > 0);
+  if (cost.length) barChart($('#ch-cost'), cost.map((c) => ({ l: c.d, v: c.usd })), { unit: '$', w: 340 });
+  const acts = [...M.actions, ...(M.savings.length ? [['save', `${M.savings.length} ways to save money`, M.savings.slice(0, 3).map((x) => x[0]).join(' · '), 'See the Cost tab for the full list.']] : [])];
+  $('#aq-count').textContent = `${acts.filter((a) => a[0] === 'bad').length} critical · ${acts.filter((a) => a[0] === 'warn').length} warning`;
+  $('#aq').innerHTML = acts.length ? acts.map(([sv, t, p2, f]) => `<div class="aqi"><span class="sev ${sv}">${{ bad: 'critical', warn: 'warning', save: 'saving' }[sv]}</span><div><b>${esc(t)}</b><p>${esc(p2)}</p><p class="fix">${esc(f)}</p></div></div>`).join('')
+    : '<p class="hint">Nothing needs attention right now.</p>';
+  const bys = T?.byService || [];
+  show('#by-svc', bys.length > 0);
+  const maxReq = bys[0]?.req || 1;
+  $('#by-svc').innerHTML = bys.slice(0, 14).map((t) => { const dead = !t.targets.includes('healthy');
+    return `<div class="svcbar ${dead ? 'dead' : ''}"><span class="nm" title="${esc(t.tg)}">${esc(t.tg)}</span><div class="bt">${dead ? '' : `<div class="bf" style="width:${Math.max(1, (t.req / maxReq) * 100)}%"></div>`}</div><span class="num">${dead ? (t.targets.length ? 'unhealthy' : 'no targets') : kfmt(t.req)}</span></div>`; }).join('');
+  const qn = L.queues || [];
+  show('#qmult', qn.length > 0);
+  $('#qmult').innerHTML = qn.map((_, i) => `<div id="q${i + 1}" class="chart"></div>`).join('');
+  qn.forEach((q, i) => lineChart($('#q' + (i + 1)), s['q' + i] || [], { label: q, color: 'var(--violet)', h: 90 }));
+}
+
+// ---------- overall AWS architecture ----------
+let ARCH_ENV = 'prod';
+const lvlOfRes = (r) => (r.lvl ? r.lvl : r.kind === 'ecs' && !r.tasks ? 'off' : 'ok');
+const DOT = { ok: 'var(--signal)', warn: 'var(--amber)', bad: 'var(--red)', off: 'var(--line)' };
+const shortHost = (when) => (when.match(/host-header=([^ &]+)/)?.[1] || '').split(',')[0] + (when.match(/path-pattern=([^ &]+)/) ? ' ' + when.match(/path-pattern=([^ &]+)/)[1].split(',')[0] : '');
+const EXT_NODE = { postgres: 'aurora', mysql: 'aurora', mongo: 'aurora', cache: 'valkey', search: 'search', cognito: 'cognito', sqs: 'sqs', ses: 'ses', s3: 's3', llm: 'ext', chatapps: 'chat' };
+
+function renderAwsArch() {
+  if (!A || !M) return;
+  const showStg = ARCH_ENV === 'all', inEnv = (env) => showStg || env === 'prod';
+  const ecs = INFRA.filter((r) => r.kind === 'ecs' && inEnv(r.env)), ec2 = INFRA.filter((r) => r.kind === 'ec2' && inEnv(r.env));
+  const N = {}, E = [], W = 1400;
+  const node = (id, x, y, w, h, o) => (N[id] = { id, x, y, w, h, ...o });
+  node('users', 16, 120, 164, 64, { icon: 'client', title: 'Users', sub: 'web and mobile' });
+  const usesChat = D?.files.some((f) => f.x.includes('chatapps'));
+  if (usesChat) node('chat', 16, 214, 164, 64, { icon: 'internet', title: 'Chat apps', sub: 'webhooks' });
+  node('ext', 16, 470, 164, 64, { icon: 'internet', title: 'External APIs', sub: 'via NAT / internet' });
+  node('r53', 212, 70, 170, 58, { icon: 'dns', title: 'Route 53', sub: 'DNS' });
+  if (A.cdn?.length) node('cf', 212, 150, 170, 64, { icon: 's3', title: `CloudFront × ${A.cdn.length}`, sub: A.cdn.map((c) => c.n).slice(0, 2).join(' · ') });
+  const apiUsed = (A.apigw || []).filter((a) => a.req > 0).length, lamUsed = (A.lambda || []).filter((f) => f.inv > 0).length;
+  if (A.apigw?.length) node('apigw', 212, 290, 170, 64, { icon: 'alb', title: `API Gateway × ${A.apigw.length}`, sub: `${apiUsed} used in 3 days`, lvl: apiUsed < A.apigw.length / 2 ? 'warn' : 'ok', note: `${A.apigw.length - apiUsed} idle` });
+  if (A.lambda?.length) node('lambda', 212, 384, 170, 64, { icon: 'lambda', title: `Lambda × ${n0(A.lambda.length)}`, sub: `${lamUsed} invoked in 3 days`, lvl: lamUsed < A.lambda.length / 2 ? 'warn' : 'ok', note: `${n0(A.lambda.length - lamUsed)} not called` });
+  // Load balancers: public ones in the public subnet, internal ones under the app subnet.
+  const envOfName = (n) => (/(^|[-_.])(stag|staging|stg|dev|test|qa)([-_.]|$)/i.test(n) ? 'staging' : 'prod');
+  const lbs = A.lb.filter((l) => inEnv(envOfName(l.n))).sort((a, b) => b.req - a.req);
+  const pub = lbs.filter((l) => l.scheme !== 'internal').slice(0, 5), internal = lbs.filter((l) => l.scheme === 'internal').slice(0, 2);
+  pub.forEach((l, i) => { const errRate = l.req ? l.err / l.req : 0;
+    node('lb:' + l.n, 430, 110 + i * 100, 160, 66, { icon: 'alb', title: l.n, sub: `${l.type === 'application' ? 'ALB' : 'NLB'} · ${n0(l.req)} ${l.type === 'network' ? 'flows' : 'req'}`,
+      lvl: errRate > 0.05 ? 'bad' : l.req === 0 ? 'off' : 'ok', note: errRate > 0.05 ? `${n0(l.err)} errors in 3 days` : `${l.routes.length} routing rules` }); });
+  if (A.nat) node('nat', 430, 110 + pub.length * 100, 160, 56, { icon: 'internet', title: 'NAT gateway', sub: `× ${A.nat} · outbound internet` });
+  // App subnet: one box per ECS cluster with its services, then EC2.
+  const CX = 615, CW = 330, chipW = 156, chipH = 22;
+  let y = 112;
+  const clusters = {};
+  ecs.forEach((r) => (clusters[r.cluster] ||= []).push(r));
+  const chipBox = (id, title, items, sub, isEc2) => {
+    const h = 34 + Math.ceil(items.length / 2) * (chipH + 5) + 6;
+    node(id, CX, y, CW, h, { group: true, title, sub, ec2: isEc2 });
+    items.forEach((r, i) => node('chip:' + r.n, CX + 8 + (i % 2) * (chipW + 6), y + 30 + Math.floor(i / 2) * (chipH + 5), chipW, chipH, { chip: true, res: r, parent: id }));
+    y += h + 14;
+  };
+  Object.entries(clusters).sort((a, b) => b[1].length - a[1].length).forEach(([c, items]) => chipBox('cl:' + c, `ECS · ${c}`, items, `${items.filter((r) => r.tasks).length} running`));
+  if (ec2.length) chipBox('cl:ec2', 'EC2 servers', ec2, `${ec2.length} running`, true);
+  internal.forEach((l) => { node('lb:' + l.n, CX, y, CW, 56, { icon: 'alb', title: l.n, sub: `internal ALB · ${n0(l.req)} req` }); y += 70; });
+  const appBottom = y;
+  // Data subnet.
+  const DX = 972, DW = 170;
+  const rds = INFRA.filter((r) => r.kind === 'rds' && inEnv(r.env));
+  let dy = 112;
+  const dataNode = (id, title, sub, list, icon) => { node(id, DX, dy, DW, 40 + list.length * 18, { icon, title, sub, list }); dy += 58 + list.length * 18; };
+  if (rds.length) dataNode('aurora', `Databases × ${rds.length}`, 'RDS / Aurora', rds.map((r) => [r.n, `${Math.round(r.cpu)}% cap`, lvlOfRes(r)]), 'aurora');
+  const caches = (A.cache || []).filter((c) => inEnv(envOfName(c.n)));
+  if (caches.length) dataNode('valkey', `Cache × ${caches.length}`, 'ElastiCache', caches.map((c) => [c.n.replace(/-0+1-0+\d$|-00\d$/, ''), `${Math.round(c.mem)}% mem`, c.mem > 80 ? 'warn' : 'ok']), 'valkey');
+  const os = (A.search || []).filter((s) => inEnv(envOfName(s.n)));
+  if (os.length) dataNode('search', `OpenSearch × ${os.length}`, 'search', os.map((s) => [s.n, `${Math.round(s.cpu)}% cpu`, s.cpu > 80 ? 'warn' : 'ok']), 'aws');
+  // Managed services that exist in the account.
+  const MX = 1172, MW = 208;
+  const sqsAct = (A.sqs || []).filter((q) => q.sent > 0 || q.backlog > 0), dlqBad = (A.sqs || []).filter((q) => q.dlq && q.backlog > 0);
+  const managed = [
+    A.cognito?.length && ['cognito', 'cognito', 'Amazon Cognito', `${A.cognito.length} user pools`, 'ok'],
+    A.sqs?.length && ['sqs', 'sqs', `Amazon SQS × ${A.sqs.length}`, `${sqsAct.length} active · ${dlqBad.length} DLQs failing`, dlqBad.length ? 'bad' : 'ok'],
+    (A.sns?.length || A.eventbridge?.length) && ['sns', 'sqs', `SNS × ${A.sns?.length || 0} · EventBridge × ${A.eventbridge?.length || 0}`, 'topics and rules', 'ok'],
+    A.ses?.length && ['ses', 'ses', 'Amazon SES', A.ses.slice(0, 2).join(' · '), 'ok'],
+    A.s3?.count && ['s3', 's3', `Amazon S3 × ${A.s3.count}`, 'buckets', 'ok'],
+    A.ecr && ['ecr', 'aws', `ECR × ${n0(A.ecr)}`, 'container images', A.ecr > 200 ? 'warn' : 'ok'],
+    A.secrets && ['secrets', 'secrets', 'Secrets Manager', `${A.secrets} secrets`, 'ok'],
+    A.dynamodb?.length && ['ddb', 'aws', `DynamoDB × ${A.dynamodb.length}`, A.dynamodb.slice(0, 3).join(' · '), 'ok'],
+  ].filter(Boolean);
+  managed.forEach(([id, icon, t, s2, l], i) => node(id, MX, 84 + i * 76, MW, 60, { icon, title: t, sub: s2, lvl: l }));
+  const H = Math.max(appBottom + 40, 84 + managed.length * 76 + 40, dy + 60, 640);
+  // Connections: routing rules, then each cluster's dependencies from its code.
+  const e = (a, b, label, cls = '') => { if (N[a] && N[b] && a !== b && !E.some((x) => x.a === a && x.b === b)) E.push({ a, b, label, cls }); };
+  e('users', 'r53', 'DNS lookup');
+  if (N.cf) e('users', 'cf', 'CDN'); if (N.apigw && N.lambda) e('apigw', 'lambda', 'invoke');
+  const keyToRow = Object.fromEntries(INFRA.filter((r) => r.key).map((r) => [r.key, r]));
+  lbs.forEach((l) => {
+    const id = 'lb:' + l.n;
+    if (l.scheme !== 'internal') e(usesChat && /event|webhook|hook/i.test(l.routes.map((r) => r.when).join(' ')) ? 'chat' : 'users', id, 'HTTPS');
+    if (l.scheme !== 'internal') e('users', id, 'HTTPS');
+    const toCluster = {};
+    l.routes.forEach((r) => {
+      const rows = r.services.map((k) => keyToRow[k]).filter(Boolean);
+      if (rows.length && rows.every((x) => !x.tasks)) rows.forEach((x) => e(id, 'chip:' + x.n, `${shortHost(r.when)} → 0 tasks`, 'bad'));
+      else rows.forEach((x) => (toCluster[x.cluster] ||= new Set()).add(shortHost(r.when)));
+      if (!r.services.length && TG_HOST[r.tg]) e(id, 'chip:' + TG_HOST[r.tg], shortHost(r.when) || 'default route');
+    });
+    Object.entries(toCluster).forEach(([c, hosts]) => e(id, 'cl:' + c, [...hosts].filter(Boolean).slice(0, 3).join(' · ') || 'rules'));
+  });
+  if (N.nat) e('nat', 'ext', 'internet');
+  Object.entries(clusters).forEach(([c, items]) => {
+    const codeDirs = Object.entries(PLACEMENT).filter(([, v]) => v.compute.some((n) => items.some((r) => r.n === n))).map(([k]) => k);
+    const exts = new Set();
+    (D?.files || []).forEach((f) => { if (codeDirs.some((k) => k === '.' || f.p.startsWith(k + '/'))) f.x.forEach((x) => exts.add(x)); });
+    exts.forEach((x) => { const tgt = EXT_NODE[x]; if (tgt === 'ext') e('cl:' + c, N.nat ? 'nat' : 'ext', 'AI model calls'); else if (tgt === 'chat') e('cl:' + c, 'chat', 'replies'); else if (tgt) e('cl:' + c, tgt, EXTERNAL[x]?.n || x); });
+    codeDirs.forEach((k) => (QUEUES[k] || []).length && e('cl:' + c, 'sqs', (QUEUES[k] || []).slice(0, 2).join(' · ')));
+    if (N.secrets) e('secrets', 'cl:' + c, 'config');
+  });
+  Object.entries(QUEUE_WORKER).forEach(([q, [w]]) => byName[w] && e('sqs', 'chip:' + w, q));
+  // Draw.
+  const g = [];
+  const zone = (x, y0, w, h, label, color, dash = '') => g.push(`<rect x="${x}" y="${y0}" width="${w}" height="${h}" rx="12" fill="none" stroke="${color}" stroke-width="1.2" ${dash ? `stroke-dasharray="${dash}"` : ''}/><text class="zone-t" x="${x + 14}" y="${y0 + 20}" fill="${color}">${label}</text>`);
+  zone(196, 26, W - 206, H - 40, `AWS Cloud · ${esc(M.meta.region)}`, 'var(--muted)');
+  zone(404, 52, 756, H - 80, 'VPC', 'var(--violet)');
+  zone(418, 80, 186, H - 120, 'Public subnet', 'var(--signal)', '5 4');
+  zone(608, 80, 344, H - 120, 'Private subnet · app', 'var(--blue)', '5 4');
+  zone(958, 80, 194, H - 120, 'Private subnet · data', 'var(--blue)', '5 4');
+  zone(1164, 52, 226, H - 80, 'AWS managed', 'var(--amber)', '2 4');
+  const center = (n) => ({ x: n.x + n.w / 2, y: n.y + n.h / 2 });
+  E.forEach((ed) => {
+    const a = N[ed.a], b = N[ed.b], ca = center(a), cb = center(b);
+    let x1, x2, y1 = ca.y, y2 = cb.y;
+    if (b.x >= a.x + a.w) { x1 = a.x + a.w; x2 = b.x; } else if (a.x >= b.x + b.w) { x1 = a.x; x2 = b.x + b.w; } else { x1 = ca.x; x2 = cb.x; y1 = b.y > a.y ? a.y + a.h : a.y; y2 = b.y > a.y ? b.y : b.y + b.h; }
+    const mx = (x1 + x2) / 2, d = Math.abs(x2 - x1) < 4 ? `M${x1},${y1} C${x1 + 60},${y1} ${x2 + 60},${y2} ${x2 + 0.1},${y2}` : `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
+    const lx = mx, ly = (y1 + y2) / 2 - 6, lab = ed.label.length > 42 ? ed.label.slice(0, 41) + '…' : ed.label, tw = Math.min(260, lab.length * 6.2 + 14);
+    g.push(`<g class="ae ${ed.cls}" data-a="${esc(ed.a)}" data-b="${esc(ed.b)}"><path class="l" d="${d}"><title>${esc(ed.label)}</title></path>
+      ${lab ? `<rect class="lb" x="${lx - tw / 2}" y="${ly - 11}" width="${tw}" height="16" rx="4" fill="var(--panel)" stroke="var(--line)"/><text x="${lx}" y="${ly + 1}" text-anchor="middle" fill="var(--ink)" font-size="10">${esc(lab)}</text>` : ''}</g>`);
+  });
+  Object.values(N).forEach((n) => {
+    if (n.chip) {
+      const r = n.res, l = lvlOfRes(r);
+      g.push(`<g class="an click" data-id="${esc(n.id)}" data-res="${esc(r.n)}"><rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="5" fill="var(--raise)" stroke="${l === 'ok' ? 'var(--line)' : DOT[l]}"/>
+        <circle cx="${n.x + 9}" cy="${n.y + n.h / 2}" r="3.5" fill="${DOT[l]}"/><text x="${n.x + 18}" y="${n.y + 15}" fill="${l === 'off' ? 'var(--muted)' : 'var(--ink)'}" font-size="10.5">${esc(r.n.length > 22 ? r.n.slice(0, 21) + '…' : r.n)}</text><title>${esc(r.n)} · ${esc(r.size || '')}${r.note ? ' · ' + esc(r.note) : ''}</title></g>`);
+      return;
+    }
+    if (n.group) {
+      g.push(`<g class="an" data-id="${esc(n.id)}"><rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="9" fill="color-mix(in srgb, var(--panel) 70%, transparent)" stroke="var(--signal)" stroke-opacity=".55" stroke-dasharray="${n.ec2 ? '' : '3 3'}"/>
+        <text x="${n.x + 10}" y="${n.y + 19}" fill="${n.ec2 ? 'var(--amber)' : 'var(--signal)'}" font-size="11" font-weight="500">${esc(n.title.length > 40 ? n.title.slice(0, 39) + '…' : n.title)}</text><text x="${n.x + n.w - 10}" y="${n.y + 19}" text-anchor="end" fill="var(--muted)" font-size="10">${esc(n.sub)}</text></g>`);
+      return;
+    }
+    const l = n.lvl || 'ok', col = l === 'bad' ? 'var(--red)' : l === 'warn' ? 'var(--amber)' : KCOLOR[n.icon] || 'var(--ink)';
+    const cap = (s2, px) => { const m = Math.floor((n.w - 50) / px); return s2.length > m ? s2.slice(0, m - 1) + '…' : s2; };
+    const list = (n.list || []).map(([a, b, lv], i) => `<circle cx="${n.x + 14}" cy="${n.y + 50 + i * 18}" r="3" fill="${DOT[lv]}"/><text x="${n.x + 22}" y="${n.y + 54 + i * 18}" fill="var(--ink)" font-size="10">${esc(a.length > 14 ? a.slice(0, 13) + '…' : a)}</text><text x="${n.x + n.w - 8}" y="${n.y + 54 + i * 18}" text-anchor="end" fill="var(--muted)" font-size="9.5">${esc(b)}</text>`).join('');
+    g.push(`<g class="an" data-id="${esc(n.id)}"><rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="9" fill="var(--panel)" stroke="${col}" stroke-width="1.3"/>
+      <g transform="translate(${n.x + 11},${n.y + 11})" fill="none" stroke="${col}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${ICON[n.icon] || ICON.aws}</g>
+      <text x="${n.x + 42}" y="${n.y + 23}" fill="var(--ink)" font-size="12" font-weight="500">${esc(cap(n.title, 7.2))}</text>
+      <text x="${n.x + 42}" y="${n.y + 39}" fill="var(--muted)" font-size="10">${esc(cap(n.sub || '', 6))}</text>${list}</g>`);
+  });
+  $('#aws-arch').innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="AWS architecture"><rect width="${W}" height="${H}" fill="var(--bg)"/>${g.join('')}</svg>`;
+  ARCH_MAP = { N, E };
+  $('#arch-info').innerHTML = `<b>${ecs.filter((r) => r.tasks).length}</b> ECS services and <b>${ec2.length}</b> EC2 servers across <b>${Object.keys(clusters).length}</b> clusters. Hover over any box to see what it connects to; click a service for details.`;
+}
+let ARCH_MAP = null;
+function archHover(id) {
+  if (!ARCH_MAP) return;
+  const svg = $('#aws-arch'); if (!svg.querySelectorAll) return;
+  if (!id) { svg.querySelectorAll('.an,.ae').forEach((el) => el.classList.remove('dim', 'hot')); return; }
+  const n = ARCH_MAP.N[id];
+  const ids = new Set([id]); // a cluster box also owns its chips
+  if (n?.group) Object.keys(ARCH_MAP.N).forEach((k) => { const c = ARCH_MAP.N[k]; if (c.chip && c.x >= n.x && c.y >= n.y && c.y < n.y + n.h && c.x < n.x + n.w) ids.add(k); });
+  if (n?.chip) Object.values(ARCH_MAP.N).forEach((c) => { if (c.group && n.x >= c.x && n.y >= c.y && n.y < c.y + c.h) ids.add(c.id); });
+  const near = new Set(ids);
+  ARCH_MAP.E.forEach((e) => { if (ids.has(e.a)) near.add(e.b); if (ids.has(e.b)) near.add(e.a); });
+  svg.querySelectorAll('.ae').forEach((el) => { const on = ids.has(el.dataset.a) || ids.has(el.dataset.b); el.classList.toggle('hot', on); el.classList.toggle('dim', !on); });
+  svg.querySelectorAll('.an').forEach((el) => el.classList.toggle('dim', !near.has(el.dataset.id) && !(ARCH_MAP.N[el.dataset.id]?.group && [...near].some((k) => ARCH_MAP.N[k]?.chip && ARCH_MAP.N[k].x >= ARCH_MAP.N[el.dataset.id].x && ARCH_MAP.N[k].y >= ARCH_MAP.N[el.dataset.id].y && ARCH_MAP.N[k].y < ARCH_MAP.N[el.dataset.id].y + ARCH_MAP.N[el.dataset.id].h))));
+  const conns = ARCH_MAP.E.filter((e) => ids.has(e.a) || ids.has(e.b));
+  const name = (k) => { const x = ARCH_MAP.N[k]; return x?.res?.n || x?.title || k; };
+  const t = n?.chip ? n.res.n : n?.title;
+  $('#arch-info').innerHTML = `<b>${esc(t || '')}</b>${n?.note ? ' · ' + esc(n.note) : n?.res?.note ? ' · ' + esc(n.res.note) : ''}${conns.length ? ' — ' + conns.slice(0, 6).map((e) => `${ids.has(e.a) ? '→ ' + esc(name(e.b)) : '← ' + esc(name(e.a))}${e.label ? ' (' + esc(e.label) + ')' : ''}`).join(' · ') : ''}`;
+}
+
+// ---------- AWS components ----------
+function comp(name, meta, { lvl = '', note = '', pill = '', idle = false } = {}) {
+  return `<div class="comp ${lvl} ${idle ? 'idle' : ''}">${pill}<span class="nm">${esc(name)}</span><span class="meta">${meta}</span>${note ? `<span class="note">${esc(note)}</span>` : ''}</div>`;
+}
+const n0 = (v) => Math.round(v).toLocaleString();
+function famTable(items, keyUsed, label) {
+  const fams = {};
+  items.forEach((x) => { const f = (fams[x.fam] ||= { n: x.fam, count: 0, used: 0 }); f.count++; if (x[keyUsed] > 0) f.used++; });
+  return Object.values(fams).filter((f) => f.count > 3).sort((a, b) => b.count - a.count)
+    .map((f) => `<tr><td class="rp">${esc(f.n)}</td><td class="num">${f.count}</td><td class="num">${f.used}</td><td>${f.used ? '' : `<span class="pill amber">${label}</span>`}</td></tr>`).join('');
+}
+function renderComponents() {
+  if (!A) return;
+  const sqsUsed = A.sqs.filter((q) => q.sent > 0 || q.backlog > 0);
+  const lamUsed = A.lambda.filter((f) => f.inv > 0);
+  const apiUsed = A.apigw.filter((a) => a.req > 0);
+  const dlqs = A.sqs.filter((q) => q.dlq && q.backlog > 0);
+  const ecsLive = INFRA.filter((r) => r.kind === 'ecs' && r.cpu > 0).length;
+  $('#comp-kpis').innerHTML = [
+    ['', A.lb.length, 'load balancers'], ['', `${apiUsed.length}/${A.apigw.length}`, 'API gateways used'], ['', `${sqsUsed.length}/${A.sqs.length}`, 'queues active, 3 days'],
+    ['', `${lamUsed.length}/${A.lambda.length}`, 'Lambdas invoked, 3 days'], ['', A.cache.length, 'caches'], ['', A.search.length, 'OpenSearch domains'],
+    ['', A.s3.count, 'S3 buckets'], ['warn', n0(A.ecr), 'container image repos'], ['bad', dlqs.length, 'dead-letter queues with messages'],
+  ].map(([c, b, s]) => `<div class="kpi ${c}"><b>${b}</b><span>${s}</span></div>`).join('');
+  const sections = [
+    ['edge', 'Edge and routing', edgeHtml()], ['compute', 'Compute', computeHtml(lamUsed, ecsLive)],
+    ['messaging', 'Queues and events', messagingHtml(sqsUsed)], ['data', 'Data stores', dataHtml()], ['platform', 'Identity, email and platform', platformHtml()],
+  ];
+  $('#comp-nav').innerHTML = sections.map(([id, t]) => `<a href="#components" data-jump="c-${id}">${t}</a>`).join('');
+  $('#comp-body').innerHTML = sections.map(([id, t, html]) => `<div class="panel comp-sec" id="c-${id}"><div class="panel-head"><h2>${t}</h2></div>${html}</div>`).join('');
+}
+function edgeHtml() {
+  const lbCards = A.lb.map((lb) => {
+    const dead = lb.routes.filter((r) => r.services.length && r.services.every((s) => !INFRA.find((x) => x.key === s)?.tasks));
+    const lvl = lb.req === 0 ? '' : lb.err > lb.req * 0.05 ? 'bad' : dead.length ? 'warn' : '';
+    const note = lb.req === 0 ? 'No traffic in 3 days' : lb.err > lb.req * 0.05 ? `${n0(lb.err)} errors vs ${n0(lb.req)} ${lb.type === 'network' ? 'connections' : 'requests'}` : dead.length ? `${dead.length} rule(s) point at services with 0 tasks` : '';
+    return comp(lb.n, `${lb.type === 'application' ? 'ALB' : 'NLB'} · ${lb.scheme} · ${n0(lb.req)} ${lb.type === 'network' ? 'flows' : 'req'} / 3d · ${lb.routes.length} rules`, { lvl, note, idle: lb.req === 0 });
+  }).join('');
+  const rules = A.lb.filter((lb) => lb.type === 'application').flatMap((lb) => lb.routes.map((r) => ({ lb: lb.n, ...r })));
+  const rows = rules.map((r) => {
+    const target = r.services.length ? r.services.map((s) => s.split('/')[1]).join(', ') : r.tg;
+    const zero = r.services.length && r.services.every((s) => !INFRA.find((x) => x.key === s)?.tasks);
+    return `<tr><td class="rp">${esc(r.lb)}</td><td class="rp">${esc(r.when.replace(/host-header=/g, '').replace(/path-pattern=/g, 'path '))}</td><td class="rp">${esc(target)}${r.services.length ? '' : ' <span class="pill mute">EC2 / IP</span>'}${zero ? ' <span class="pill red">0 tasks</span>' : ''}</td></tr>`;
+  }).join('');
+  const cdn = A.cdn.map((d) => comp(d.n, `CloudFront → ${esc(d.origin.length > 20 ? 'Lambda URL' : d.origin)}${d.aliases.length ? ' · ' + esc(d.aliases.join(', ')) : ''}`)).join('');
+  const apis = A.apigw.filter((a) => a.req > 0).map((a) => comp(a.n, `API Gateway ${a.proto} · ${n0(a.req)} req / 3d`)).join('');
+  return `<div class="comp-grid">${lbCards}</div>
+    <h3 style="margin:18px 0 8px">Routing rules: hostname and path → service</h3><div class="tbl"><table><thead><tr><th>Load balancer</th><th>When</th><th>Goes to</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <h3 style="margin:18px 0 8px">CDN and API gateways in use</h3><div class="comp-grid">${cdn}${apis}</div>
+    <p class="hint">${A.apigw.length - A.apigw.filter((a) => a.req > 0).length} of ${A.apigw.length} API gateways had no requests in 3 days.</p>`;
+}
+function computeHtml(lamUsed, ecsLive) {
+  const ec2 = INFRA.filter((r) => r.kind === 'ec2').map((r) => comp(r.n, `EC2 · ${esc(r.size)} · CPU ${fmt(r.cpu)}%`, { lvl: r.lvl, note: r.note })).join('');
+  const lam = lamUsed.sort((a, b) => b.inv - a.inv).map((f) => comp(f.n, `Lambda · ${f.mem} MB · ${n0(f.inv)} calls · ${Math.round(f.dur)} ms avg${f.err ? ' · ' + f.err + ' errors' : ''}`, { lvl: f.err ? 'warn' : '' })).join('');
+  return `<p class="hint" style="margin-top:0">${ecsLive} ECS containers are live (see Overview). Servers and the Lambda functions that actually ran:</p>
+    <div class="comp-grid">${ec2}</div><h3 style="margin:18px 0 8px">Lambda functions invoked in the last 3 days</h3><div class="comp-grid">${lam}</div>
+    <h3 style="margin:18px 0 8px">Lambda families</h3><div class="tbl"><table><thead><tr><th>Family</th><th style="text-align:right">Functions</th><th style="text-align:right">Invoked</th><th></th></tr></thead><tbody>${famTable(A.lambda, 'inv', 'all idle')}</tbody></table></div>
+    <p class="hint">${n0(A.lambda.length - lamUsed.length)} functions were not called in 3 days. Idle Lambdas cost nothing to run but add deployment clutter.</p>`;
+}
+function messagingHtml(sqsUsed) {
+  const q = sqsUsed.sort((a, b) => b.sent - a.sent).map((x) => {
+    const stuck = x.backlog > 0 && x.age > 3600;
+    const lvl = x.dlq && x.backlog > 0 ? 'bad' : stuck ? 'warn' : '';
+    const note = x.dlq && x.backlog > 0 ? `${x.backlog} failed message(s), oldest ${Math.round(x.age / 3600)} h` : stuck ? `Backlog ${x.backlog}, oldest ${Math.round(x.age / 60)} min` : '';
+    return comp(x.n, `SQS${x.fifo ? ' FIFO' : ''} · ${n0(x.sent)} sent / 3d · backlog ${x.backlog}`, { lvl, note, pill: x.dlq ? '<span class="pill red">DLQ</span>' : x.n.startsWith('staging') ? '<span class="pill mute">staging</span>' : '<span class="pill">prod</span>' });
+  }).join('');
+  const sns = A.sns.map((t) => comp(t.n, `SNS · ${n0(t.published)} published / 3d`, { idle: !t.published })).join('');
+  const eb = A.eventbridge.map((r) => comp(r, 'EventBridge rule')).join('');
+  return `<div class="comp-grid">${q}</div>
+    <h3 style="margin:18px 0 8px">Idle queue families</h3><div class="tbl"><table><thead><tr><th>Family</th><th style="text-align:right">Queues</th><th style="text-align:right">Active</th><th></th></tr></thead><tbody>${famTable(A.sqs, 'sent', 'all idle')}</tbody></table></div>
+    <p class="hint">${A.sqs.length - sqsUsed.length} of ${A.sqs.length} queues had no messages in 3 days. Families of many similar queues are grouped above.</p>
+    <h3 style="margin:18px 0 8px">Topics and rules</h3><div class="comp-grid">${sns}${eb}</div>`;
+}
+function dataHtml() {
+  const rds = INFRA.filter((r) => r.kind === 'rds').map((r) => comp(r.n, `Aurora serverless · ${fmt(r.cpu)}% of max capacity`, { lvl: r.lvl, note: r.note })).join('');
+  const cache = A.cache.map((c) => comp(c.n, `${c.engine} · ${c.type} · CPU ${fmt(c.cpu)}% · mem ${fmt(c.mem)}% · ${n0(c.conns)} conns`)).join('');
+  const search = A.search.map((s) => comp(s.n, `OpenSearch · ${s.type} × ${s.count} · CPU ${fmt(s.cpu)}% · ${s.freeGB} GB free`,
+    { lvl: s.n.startsWith('staging') ? 'warn' : '', note: s.n.startsWith('staging') ? 'Staging audit-log cluster runs 24×7' : '' })).join('');
+  const ddb = A.dynamodb.map((t) => comp(t, 'DynamoDB table')).join('');
+  const s3 = comp(`${A.s3.count} S3 buckets`, 'bucket names are not collected');
+  return `<div class="comp-grid">${rds}${cache}${search}${ddb}${s3}</div>`;
+}
+function platformHtml() {
+  return `<div class="comp-grid">${A.cognito.map((p) => comp(p.n, 'Cognito user pool')).join('')}
+    ${comp('Amazon SES', 'Sending domains: ' + esc(A.ses.join(', ')))}
+    ${comp('NAT gateways', `${A.nat} available`)}
+    ${comp('Secrets Manager', `${A.secrets} secrets`)}
+    ${comp('ECR', `${n0(A.ecr)} image repositories`, A.ecr > 200 ? { lvl: 'warn', note: 'Many image repositories. Add a lifecycle policy to expire old images' } : {})}</div>`;
+}
+
+// ---------- events ----------
+$('#ask-form').addEventListener('submit', (e) => { e.preventDefault(); ask($('#ask').value || $('#ask').placeholder); });
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); $('#ask').focus(); $('#ask').select(); }
+  if (e.key === 'Escape') $('#drawer').hidden = true;
+});
+document.addEventListener('click', (e) => {
+  const res = e.target.closest('[data-res]'); if (res) { openRes(res.dataset.res); return; }
+  const rt = e.target.closest('[data-route]');
+  if (rt) { const i = +rt.dataset.route; $('#drawer').hidden = true; showView('trace'); if (!rt.classList.contains('cand')) renderCands([i], i); traceAndDraw(i); return; }
+  const mod = e.target.closest('summary[data-mod]'); if (mod) showModule(mod.dataset.mod);
+  if (e.target.closest('#voice')) { VOICE = !VOICE; const b = $('#voice'); b.setAttribute('aria-pressed', VOICE); b.textContent = VOICE ? 'Voice on' : 'Voice off'; if (!VOICE) { synth?.cancel(); $('#hud').classList.remove('talking'); } try { localStorage.setItem('ops-voice', VOICE ? 'on' : 'off'); } catch (err) { /* ignore */ } return; }
+  const st = e.target.closest('[data-step]'); if (st) { stopPlay(); focusStep(+st.dataset.step); return; }
+  if (e.target.closest('#play')) { play(); return; }
+  if (e.target.closest('#ask-claude')) { askClaudeNow(); return; }
+  if (e.target.closest('#prev')) { stopPlay(); focusStep(cur - 1); return; }
+  if (e.target.closest('#next')) { stopPlay(); focusStep(cur + 1); return; }
+  const jump = e.target.closest('[data-jump]'); if (jump) { e.preventDefault(); document.getElementById(jump.dataset.jump)?.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); }
+  if (e.target.id === 'dclose') $('#drawer').hidden = true;
+});
+$('#examples').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { $('#ask').value = b.textContent; ask(b.textContent); } });
+$('#tree-filter').addEventListener('input', (e) => renderTree(e.target.value));
+$('#aws-arch').addEventListener('mouseover', (e) => { const n = e.target.closest('.an'); if (n) archHover(n.dataset.id); });
+$('#aws-arch').addEventListener('focusin', (e) => { const n = e.target.closest('.an'); if (n) archHover(n.dataset.id); });
+$('#aws-arch').addEventListener('mouseleave', () => archHover(null));
+['env-prod', 'env-all'].forEach((id) => $('#' + id).addEventListener('click', () => {
+  ARCH_ENV = id === 'env-all' ? 'all' : 'prod';
+  $('#env-prod').setAttribute('aria-pressed', ARCH_ENV === 'prod'); $('#env-all').setAttribute('aria-pressed', ARCH_ENV === 'all');
+  renderAwsArch();
+}));
+$('#voice-rate').value = String(VOICE_RATE);
+$('#voice-pick').addEventListener('change', (e) => {
+  VOICE_NAME = e.target.value; try { localStorage.setItem('ops-voice-name', VOICE_NAME); } catch (err) { /* ignore */ }
+  if (!playing && VOICE) { const was = VOICE; VOICE = true; speak('Hi, I will walk you through this request, one hop at a time.', playToken); VOICE = was; }
+});
+$('#voice-rate').addEventListener('change', (e) => { VOICE_RATE = +e.target.value; try { localStorage.setItem('ops-voice-rate', String(VOICE_RATE)); } catch (err) { /* ignore */ } });
+
+showView(location.hash.slice(1) || 'overview');
+{ const vb = $('#voice'); vb.setAttribute('aria-pressed', VOICE); vb.textContent = VOICE ? 'Voice on' : 'Voice off'; if (!synth) { vb.disabled = true; vb.textContent = 'Voice unavailable'; } }
+const load = (f, fallback) => fetch(f).then((r) => (r.ok ? r.json() : fallback)).catch(() => fallback);
+Promise.all([load('code.json', null), load('aws.json', null), load('flows.json', {}), load('ts.json', null), load('model.json', null)]).then(([d, a, fl, ts, model]) => {
+  if (!d || !model) throw new Error('missing data');
+  D = d; F = fl; T = ts; M = model;
+  // Any collector may have been skipped (no permission, service unused): default every field so views still render.
+  A = a && { lb: [], ecs: [], ec2: [], rds: [], sqs: [], sns: [], lambda: [], cache: [], search: [], apigw: [], cdn: [], cognito: [], dynamodb: [], ses: [], eventbridge: [],
+    s3: { count: 0 }, nat: 0, ecr: 0, secrets: 0, eips: { total: 0, unattached: 0 }, ...a };
+  INFRA = M.infra; SYS_LABEL = M.systems; PLACEMENT = M.placement; QUEUES = M.queues; QUEUE_WORKER = M.queueWorkers; TG_HOST = M.tgHost;
+  SPEND = M.spend; SAVINGS = M.savings; EXAMPLES = M.examples.length ? M.examples : ['Show me POST /login'];
+  byName = Object.fromEntries(INFRA.map((r) => [r.n, r]));
+  $('#brand').textContent = M.meta.company ? `HOPSCOPE · ${M.meta.company.toUpperCase()}` : 'HOPSCOPE';
+  document.title = M.meta.company ? `${M.meta.company} · Hopscope` : 'Hopscope';
+  $('#arch-kicker').textContent = `AWS architecture · ${M.meta.region}`; $('#arch-title').textContent = `${M.meta.company || 'Platform'}, as deployed`;
+  document.querySelector('.status > span:last-child').textContent = `Collected ${new Date(M.meta.collectedAt).toLocaleDateString()}`;
+  document.querySelector('.status > span:first-child').innerHTML = `<span class="dot"></span> ${esc(M.meta.region)}`;
+  $('#ask').placeholder = EXAMPLES[0];
+  $('#foot').innerHTML = `Sources: AWS (read-only) collected ${esc(new Date(M.meta.collectedAt).toLocaleString())} · code map from the ${esc(M.meta.codeSource || 'scanner')} (${n0(d.routes.length)} APIs, ${n0(d.files.length)} files, ${esc(d.generatedAt.slice(0, 10))}). Links between code and infrastructure are inferred; confirm them with <code>hopscope.py review</code>.`;
+  $('#examples').innerHTML = EXAMPLES.map((x) => `<button type="button">${esc(x)}</button>`).join('');
+  const maxSpend = Math.max(1, ...SPEND.map((s) => s[1]));
+  $('#spend tbody').innerHTML = SPEND.map(([n, c]) => `<tr><td>${esc(n)}</td><td style="width:40%"><div class="costbar" style="width:${(c / maxSpend) * 100}%"></div></td><td class="num">${c.toFixed(2)}</td></tr>`).join('');
+  $('#savings tbody').innerHTML = SAVINGS.length ? SAVINGS.map(([n, s]) => `<tr><td>${esc(n)}</td><td class="num">${esc(s)}</td></tr>`).join('') : '<tr><td colspan="2" class="hint">No savings found.</td></tr>';
+  if (A) { renderComponents(); renderAwsArch(); }
+  renderOps(); renderOverview(); renderTree();
+  $('#cat-count').textContent = `${d.routes.length} APIs by system`;
+  const top = D.modules.find((m) => m.parent === null && m.files > 0); if (top) showModule(top.id);
+  const first = candidates(EXAMPLES[0])[0];
+  if (first != null) { renderCands(candidates(EXAMPLES[0]).slice(0, 8), first); traceAndDraw(first); }
+}).catch((err) => { $('#status-strip').innerHTML = `<b>The console data did not load (${esc(err.message)}).</b> Run the collector again, then reload.`; });
+</script>
+</body></html>
