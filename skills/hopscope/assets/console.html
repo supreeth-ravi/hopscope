@@ -427,7 +427,7 @@ function openRes(name) {
     <dl><dt>Type</dt><dd>${{ ecs: 'ECS container service', ec2: 'EC2 server', rds: 'Aurora serverless database', sqs: 'SQS queue', lb: 'Load balancer' }[r.kind]}</dd>${edgeFor(r.n) ? `<dt>Public route</dt><dd class="mono">${esc(edgeFor(r.n).lb)}<br>${esc(edgeFor(r.n).when)}</dd>` : ''}<dt>Size</dt><dd>${esc(r.size)}</dd>
     <dt>${r.kind === 'rds' ? 'Capacity used' : 'CPU avg'}</dt><dd class="mono">${fmt(r.cpu)}%</dd>${r.mem != null ? `<dt>Memory avg</dt><dd class="mono">${fmt(r.mem)}%</dd>` : ''}
     <dt>Runs code</dt><dd class="mono">${roots.map(esc).join('<br>') || '—'}</dd><dt>APIs served</dt><dd>${routes.length || '—'}</dd></dl>
-    ${routes.length ? `<div><span class="label">Sample APIs</span>${routes.slice(0, 12).map((x) => `<button class="route" data-route="${D.routes.indexOf(x)}"><span class="verb ${x.m}">${x.m}</span><span class="rp">${esc(x.p)}</span></button>`).join('')}</div>` : ''}`;
+    ${routes.length ? `<div><span class="label">Sample APIs</span>${routes.slice(0, 12).map((x) => `<button class="route" data-route="${D.routes.indexOf(x)}"><span class="verb ${esc(x.m)}">${esc(x.m)}</span><span class="rp">${esc(x.p)}</span></button>`).join('')}</div>` : ''}`;
   $('#drawer').hidden = false; $('#dclose').focus();
 }
 
@@ -443,11 +443,11 @@ function renderTree(q = '') {
       const rs = D.routes.map((r, i) => [r, i]).filter(([r]) => moduleOfRoute(r) === m.id && (!ql || (r.p + ' ' + r.t + ' ' + r.d).toLowerCase().includes(ql)));
       if (ql && !rs.length) return '';
       shown += rs.length;
-      return `<details ${ql ? 'open' : ''}><summary data-mod="${m.id}">${esc(m.label)}<span class="cnt">${rs.length} API</span></summary>
-        ${rs.slice(0, 200).map(([r, i]) => `<button class="route" data-route="${i}"><span class="verb ${r.m}">${r.m}</span><span class="rp">${esc(r.p)}</span><span class="rt">${esc(r.t)}</span></button>`).join('')}</details>`;
+      return `<details ${ql ? 'open' : ''}><summary data-mod="${esc(m.id)}">${esc(m.label)}<span class="cnt">${rs.length} API</span></summary>
+        ${rs.slice(0, 200).map(([r, i]) => `<button class="route" data-route="${+i}"><span class="verb ${esc(r.m)}">${esc(r.m)}</span><span class="rp">${esc(r.p)}</span><span class="rt">${esc(r.t)}</span></button>`).join('')}</details>`;
     }).join('');
     if (ql && !subHtml) return '';
-    return `<details ${ql ? 'open' : ''}><summary data-mod="${sys.id}"><b>${esc(sys.label)}</b><span class="cnt">${sys.files} files</span></summary>${subHtml}</details>`;
+    return `<details ${ql ? 'open' : ''}><summary data-mod="${esc(sys.id)}"><b>${esc(sys.label)}</b><span class="cnt">${sys.files} files</span></summary>${subHtml}</details>`;
   }).join('') || '<p class="hint">No API matches that filter.</p>';
   $('#tree-count').textContent = ql ? `${shown} match` : `${D.routes.length} APIs`;
 }
@@ -620,7 +620,7 @@ function describeTrace(t) {
 }
 function traceAndDraw(i) { askCtl?.abort(); const t = traceRoute(i); drawArch(t); setAnalyst('built-in'); document.querySelectorAll('.cand').forEach((c) => c.setAttribute('aria-pressed', +c.dataset.route === i)); return t; }
 function renderCands(list, active) {
-  $('#cands').innerHTML = list.map((i) => { const r = D.routes[i]; return `<button class="cand" data-route="${i}" aria-pressed="${i === active}"><span class="verb ${r.m}">${r.m}</span><span class="rp">${esc(r.p)}</span><span class="hint">${esc(r.t)}</span></button>`; }).join('');
+  $('#cands').innerHTML = list.map((i) => { const r = D.routes[i]; return `<button class="cand" data-route="${+i}" aria-pressed="${i === active}"><span class="verb ${esc(r.m)}">${esc(r.m)}</span><span class="rp">${esc(r.p)}</span><span class="hint">${esc(r.t)}</span></button>`; }).join('');
 }
 
 // ---------- system-design trace ----------

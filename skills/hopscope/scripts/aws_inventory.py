@@ -13,7 +13,7 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from awsutil import SAFE_VALUE, env_of, family, metric_totals, paginate, session
+from awsutil import env_of, family, metric_totals, paginate, safe_value, session
 
 
 def collect_sqs(s: Any, cw: Any) -> list[dict]:
@@ -56,7 +56,10 @@ def collect_ecs(s: Any, cw: Any, env_rx: str | None) -> list[dict]:
                     images.append(image.split("/")[-1].split(":")[0].split("@")[0])
                     own_image |= ".dkr.ecr." in image  # built by this account; public images are off-the-shelf software
                     # Keep only AWS endpoints and queue URLs, with the account number masked.
-                    refs += [{"k": e["name"], "v": re.sub(r"\b\d{12}\b", "************", e["value"])} for e in ct.get("environment", []) if SAFE_VALUE.search(str(e.get("value", "")))]
+                    for e in ct.get("environment", []):
+                        v = safe_value(e.get("value", ""))
+                        if v:
+                            refs.append({"k": e["name"], "v": re.sub(r"\b\d{12}\b", "************", v)})
                 cpu, mem = int(td.get("cpu") or 0), int(td.get("memory") or 0)
                 services.append({"cluster": cname, "n": svc["serviceName"], "running": svc["runningCount"], "desired": svc["desiredCount"],
                                  "size": f"{cpu / 1024:g} vCPU · {mem / 1024:g} GB" if cpu else "", "images": images, "ownImage": own_image, "containers": names, "refs": refs,

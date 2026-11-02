@@ -8,8 +8,25 @@ from typing import Any
 import boto3
 
 STAGING = re.compile(r"(^|[-_./])(stag|staging|stg|dev|development|test|qa|sandbox|preview)([-_./]|$)", re.I)
-# Environment values worth keeping: AWS endpoints and queue URLs only. Everything else may be a secret.
-SAFE_VALUE = re.compile(r"^https://sqs\.[a-z0-9-]+\.amazonaws\.com/\d+/[\w.-]+$|\.rds\.amazonaws\.com|\.cache\.amazonaws\.com|\.es\.amazonaws\.com|\.aoss\.amazonaws\.com")
+# Environment values worth keeping: queue URLs and AWS endpoint hostnames only. Everything else may be a secret.
+QUEUE_URL = re.compile(r"^https://sqs\.[a-z0-9-]+\.amazonaws\.com/\d{12}/[\w.-]+$")
+# The endpoint must be the whole host: optional port and a plain path after it, nothing else (no query strings).
+AWS_HOST = re.compile(r"^([a-z0-9][\w.-]*\.(?:rds|cache|es|aoss)\.amazonaws\.com)(?::\d{1,5})?(?:/[\w./-]*)?$", re.I)
+
+
+def safe_value(value: str) -> str | None:
+    """A queue URL as-is, or just the hostname of a database/cache/search endpoint; None for anything else.
+
+    Connection strings such as postgres://user:password@host/db are reduced to the bare host, so
+    credentials, paths and query strings are never stored.
+    """
+    v = str(value or "").strip()
+    if QUEUE_URL.match(v):
+        return v
+    host_part = re.sub(r"^[a-z][a-z0-9+.-]*://", "", v, flags=re.I)  # drop scheme://
+    host_part = re.sub(r"^[^@/]*@", "", host_part)  # drop user:password@
+    m = AWS_HOST.match(host_part)
+    return m.group(1).lower() if m else None
 
 
 def session(profile: str | None = None, region: str | None = None) -> boto3.Session:

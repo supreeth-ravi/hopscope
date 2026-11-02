@@ -83,8 +83,34 @@ def review(data: Path) -> None:
             print(f'  {k:55} -> {v["code"]}')
 
 
+class LocalOnlyHandler(http.server.SimpleHTTPRequestHandler):
+    """Serves the site only to requests addressed to this machine by name or loopback address.
+
+    A malicious web page could otherwise point its own domain at 127.0.0.1 (DNS rebinding) and read the
+    console's data through the visitor's browser.
+    """
+
+    allowed_hosts: frozenset[str] = frozenset()
+
+    def _host_ok(self) -> bool:
+        return (self.headers.get("Host") or "").lower() in self.allowed_hosts
+
+    def do_GET(self) -> None:  # noqa: N802 - http.server naming
+        if not self._host_ok():
+            self.send_error(403, "Hopscope only answers on localhost")
+            return
+        super().do_GET()
+
+    def do_HEAD(self) -> None:  # noqa: N802
+        if not self._host_ok():
+            self.send_error(403, "Hopscope only answers on localhost")
+            return
+        super().do_HEAD()
+
+
 def serve(site: Path, port: int) -> None:
-    handler = partial(http.server.SimpleHTTPRequestHandler, directory=str(site))
+    LocalOnlyHandler.allowed_hosts = frozenset({f"127.0.0.1:{port}", f"localhost:{port}"})
+    handler = partial(LocalOnlyHandler, directory=str(site))
     print(f"serving {site} at http://127.0.0.1:{port}/  (Ctrl-C to stop)")
     http.server.ThreadingHTTPServer(("127.0.0.1", port), handler).serve_forever()
 
