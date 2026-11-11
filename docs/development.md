@@ -22,7 +22,7 @@ $PY -m mypy --ignore-missing-imports skills/hopscope/scripts
 $PY -m pytest tests --cov=skills/hopscope/scripts
 ```
 
-Tests never touch a real AWS account. The demo in `docs/demo` is a fictional company, Kestrel Coffee: its code, AWS setup, traffic and cost are all invented.
+Tests never touch a real AWS account. The demo in `docs/demo` is a fictional company, Kestrel Coffee: its code, AWS setup, traffic and cost are all invented. `python docs/demo/make_demo.py` rebuilds it by running Hopscope's own pipeline over a small invented codebase and AWS inventory; never build the demo from a real account.
 
 Try a local change in Claude Code without publishing:
 
