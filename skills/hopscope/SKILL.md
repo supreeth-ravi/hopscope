@@ -20,6 +20,24 @@ than in the sandbox. Codex has no `!` prefix, so ask the user to run `aws login`
 There is no Artifact tool, so show the console with `hopscope.py serve` (step 5). In plain words, the
 user can ask for "a Hopscope console" or type `$hopscope`.
 
+## Design mode (no AWS)
+
+If there is no AWS sign-in, the user has no AWS account yet, or they ask for a design or architecture
+view of what the files describe, skip the AWS steps and run:
+
+```bash
+$PY <skill-dir>/scripts/hopscope.py design --repo <path> [--repo <path> …] [--overrides hopscope.json] --workdir <project>/.hopscope
+```
+
+It reads docker compose, Terraform and CloudFormation/SAM files under the repos, links code to the
+services they run (exactly from compose `build:` folders, by name matching for Terraform and
+CloudFormation, with doubtful links listed by `hopscope.py review`), and writes the same console. Say plainly that it is built
+from code and infrastructure files with **no live numbers** (no traffic, health or cost). Environment
+values from those files are filtered: only queue names, masked hosts and service names are kept, so no
+secrets are stored. Not read yet: Serverless Framework, CDK (unless `cdk synth` output exists),
+Kubernetes/Helm, Pulumi, and Terraform modules, variables and `for_each`. Once the user signs in to AWS,
+offer `hopscope.py all` for the live view.
+
 ## Workflow
 
 ### 1. Set up and check access

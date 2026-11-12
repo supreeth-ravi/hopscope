@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0 — 2026-11-12
+
+- **Design mode.** `hopscope.py design --repo <path>` builds the console from your code and your docker compose, Terraform and CloudFormation/SAM files, with no AWS account or credentials. The Architecture, Components and Trace views work; there are no live numbers and the Cost tab is hidden.
+- **Exact links.** A compose `build:` folder places a service on its code with full confidence. In design mode a queue links to code only through a real reference (a quoted name, a queue URL, or a `...QUEUE` environment variable), not a substring.
+- **Environment-value filter.** Values read from infrastructure files are allowlisted: queue names, masked hosts and service names are kept; credential-like values are dropped. Engine and size labels are sanitised, and the console escapes everything read from files.
+- **Design checks.** Routes with nothing serving them, queues with no dead-letter queue, production services planned with one task, and services with no code found.
+- **Console design view.** "Design" status, planned task counts instead of CPU and memory, skipped files noted in the footer, no DNS box, no Cost tab.
+- New dependency: PyYAML.
+
 ## 0.2.0 — 2026-11-02
 
 - **Codex support.** Install from the Codex plugin marketplace (`codex plugin marketplace add supreeth-ravi/hopscope`) and ask for a Hopscope console or type `$hopscope`.

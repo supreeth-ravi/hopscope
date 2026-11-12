@@ -12,7 +12,7 @@ Claude or Codex reads your AWS account and your code, links the two, and gives y
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757?style=flat-square)](https://code.claude.com/docs/en/overview)
 [![Codex plugin](https://img.shields.io/badge/Codex-plugin-111?style=flat-square)](docs/codex.md)
 [![Tests](https://img.shields.io/github/actions/workflow/status/supreeth-ravi/hopscope/test.yml?branch=main&style=flat-square&label=tests)](https://github.com/supreeth-ravi/hopscope/actions/workflows/test.yml)
-[![Version](https://img.shields.io/badge/version-0.2.0-111?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.3.0-111?style=flat-square)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111?style=flat-square)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-%E2%89%A53.10-111?style=flat-square)](https://www.python.org)
 [![AWS read-only](https://img.shields.io/badge/AWS-read--only-111?style=flat-square)](skills/hopscope/references/iam-policy.json)
@@ -26,6 +26,7 @@ Claude or Codex reads your AWS account and your code, links the two, and gives y
 </p>
 <p align="center"><sub>A sign-in request, hop by hop: DNS → load balancer rule → the <code>shop-api</code> container and its code path → Cognito and the database → back to the browser.</sub></p>
 <p align="center"><b><a href="https://supreeth-ravi.github.io/hopscope/demo/">Try the live demo →</a></b> Explore Kestrel Coffee, a fictional company's console, in your browser. No install, no AWS account.</p>
+<p align="center">No AWS account of your own? <code>hopscope.py design --repo .</code> builds the map from your code plus docker compose, Terraform or CloudFormation files.</p>
 
 ## Why Hopscope?
 
@@ -93,6 +94,14 @@ Load balancer rules, Lambda, queues and dead-letter queues, topics, caches, sear
 
 **🔒 Read-only and private**<br>
 Only Describe/List/Get calls. Secrets are never stored, account numbers are masked, and the local server answers only to your machine.
+
+</td>
+</tr>
+<tr>
+<td colspan="2" valign="top">
+
+**📐 Works before you deploy**<br>
+Design mode reads docker compose, Terraform and CloudFormation/SAM files and links your code to the services they run: exactly where a compose file names the build folder, by name matching for Terraform and CloudFormation (doubtful links are listed by `hopscope.py review`). No AWS account, no credentials, no live numbers: the architecture, the traces and a few checks on what the files plan.
 
 </td>
 </tr>
@@ -187,6 +196,7 @@ Prefer the command line? See [Getting started](docs/getting-started.md#without-a
 | "What's the biggest risk in our AWS right now?" | "What happens on checkout?" |
 | "Fix the critical items from Hopscope's action queue" | "Show me POST /orders" |
 | "Which services in Hopscope can we turn off?" | Press ▶ and listen to the request |
+| "Map this repo from its Terraform, no AWS" | "Show me POST /orders" (design mode) |
 
 ## How it works
 

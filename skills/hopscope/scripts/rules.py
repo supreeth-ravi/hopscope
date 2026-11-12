@@ -22,10 +22,20 @@ def fmt_n(v: float) -> str:
     return f"{round(v):,}"
 
 
+def db_size(d: dict) -> str:
+    """How a database is sized, without printing missing numbers (design rows have none)."""
+    if d["serverless"]:
+        if d.get("minAcu") is not None and d.get("maxAcu") is not None:
+            return f'Aurora serverless {d["minAcu"]}–{d["maxAcu"]} ACU'
+        return "Aurora serverless"
+    return d["class"] or d.get("engine") or "database"
+
+
 def infra_entries(inv: dict, links: dict) -> tuple[list[dict], dict[str, str]]:
     """Every compute and database resource as one row the console can draw."""
     placed = {k: v["code"] for k, v in links["placement"].items()}
     labels = dict(links["labels"])
+    design = inv.get("mode") == "design"
     rows: list[dict] = []
     counts: dict[str, int] = {}
     for x in inv["ecs"]:
@@ -37,7 +47,7 @@ def infra_entries(inv: dict, links: dict) -> tuple[list[dict], dict[str, str]]:
         # Same service name in two clusters (prod and staging copies): keep prod's plain name.
         name = x["n"] if counts[x["n"]] == 1 or x["env"] == "prod" else f'{x["n"]} ({x["cluster"]})'
         rows.append({"n": name, "key": key, "sys": sys_id, "kind": "ecs", "env": x["env"], "cpu": round(x["cpu"], 2) if x["running"] else 0,
-                     "mem": round(x["mem"], 1) if x["running"] else None, "memMax": x["memMax"], "size": x["size"] or "Fargate",
+                     "mem": round(x["mem"], 1) if x["running"] and not design else None, "memMax": x["memMax"], "size": x["size"] or (f'planned in {x.get("source") or "files"}' if design else "Fargate"),
                      "cluster": x["cluster"], "tasks": x["running"]})
     for e in inv["ec2"]:
         if e["state"] != "running":
@@ -49,7 +59,7 @@ def infra_entries(inv: dict, links: dict) -> tuple[list[dict], dict[str, str]]:
     for d in inv["rds"]:
         cap = (100 * d["acu"] / d["maxAcu"]) if d["serverless"] and d["maxAcu"] else d["cpu"]
         rows.append({"n": d["n"], "sys": "data", "kind": "rds", "env": d["env"], "cpu": round(cap, 1), "mem": None, "conns": d["conns"],
-                     "size": f'Aurora serverless {d["minAcu"]}–{d["maxAcu"]} ACU' if d["serverless"] else d["class"]})
+                     "size": db_size(d)})
     labels.setdefault("data", "Databases")
     return rows, labels
 
@@ -161,6 +171,30 @@ def evaluate(inv: dict, ts: dict, links: dict, rows: list[dict], th: dict) -> tu
     return actions, savings
 
 
+def evaluate_design(inv: dict, links: dict) -> list[list]:
+    """Checks that need no metrics: what the files say is planned."""
+    actions: list[list] = []
+    orphans = [f'{lb["n"]}: {r["when"]}' for lb in inv["lb"] for r in lb["routes"]
+               if not r["services"] and not r.get("attached") and r.get("tgType", "ip") not in ("lambda", "alb", "instance")]
+    if orphans:  # the target group may be served from elsewhere, so this is a question, not a fault
+        actions.append(["warn", f"{len(orphans)} route(s) have no service for them in these files",
+                        f'{"; ".join(orphans[:5])}. The target group may be served from another folder, module or account.',
+                        "Point Hopscope at the repo that defines it, or ignore."])
+    no_dlq = [q["n"] for q in inv["sqs"] if not q["dlq"] and not q.get("redrive")]
+    if no_dlq:
+        actions.append(["warn", f"{len(no_dlq)} queue(s) have no dead-letter queue", f'{", ".join(no_dlq[:5])}: a message that keeps failing is retried forever or lost.',
+                        "Add a dead-letter queue with a redrive policy."])
+    singles = [x["n"] for x in inv["ecs"] if x["env"] == "prod" and x["desired"] == 1 and x.get("ownImage") is not False and x.get("source") != "compose"]
+    if singles:
+        actions.append(["warn", f"{len(singles)} production service(s) planned with a single task", f'{", ".join(singles[:5])}: any restart or deploy is a short outage.',
+                        "Set the desired count to at least 2 for services on the request path."])
+    if links.get("unplaced"):
+        actions.append(["warn", f'{len(links["unplaced"])} service(s) with no code found', ", ".join(links["unplaced"][:5]),
+                        'Point Hopscope at the repo that builds them, or set them in hopscope.json under "placement".'])
+    actions.sort(key=lambda a: {"bad": 0, "warn": 1}.get(a[0], 2))
+    return actions
+
+
 def examples(code: dict, flows: dict, placed: set[str]) -> list[str]:
     """Five questions worth asking: the routes with the richest real call sequences."""
     scored = []
@@ -188,22 +222,23 @@ def main() -> None:
     a = ap.parse_args()
     d = Path(a.data)
     inv, code, links = (json.loads((d / f).read_text()) for f in ("aws.json", "code.json", "links.json"))
-    ts = json.loads((d / "ts.json").read_text()) if (d / "ts.json").exists() else {}
+    ts = json.loads((d / "ts.json").read_text()) if (d / "ts.json").exists() and inv.get("mode") != "design" else {}  # a stale ts.json is not about these files
     flows = json.loads((d / "flows.json").read_text()) if (d / "flows.json").exists() else {}
     ov = json.loads(Path(a.overrides).read_text()) if a.overrides and Path(a.overrides).exists() else {}
     th = {**THRESHOLDS, **(ov.get("thresholds") or {})}
     rows, labels = infra_entries(inv, links)
-    actions, savings = evaluate(inv, ts, links, rows, th)
+    design = inv.get("mode") == "design"
+    actions, savings = (evaluate_design(inv, links), []) if design else evaluate(inv, ts, links, rows, th)
     crit = [x for x in actions if x[0] == "bad"]
     status = {"state": "bad" if crit else ("warn" if actions else "ok"),
-              "headline": " · ".join(x[1] for x in crit[:2]) if crit else ("No critical issues" if not actions else actions[0][1]),
-              "detail": f"{len(crit)} critical · {sum(1 for x in actions if x[0] == 'warn')} warnings · {len(savings)} savings found"}
+              "headline": " · ".join(x[1] for x in crit[:2]) if crit else (("Design view: nothing critical in the files" if design else "No critical issues") if not actions else actions[0][1]),
+              "detail": f"{len(crit)} critical · {sum(1 for x in actions if x[0] == 'warn')} warnings" + ("" if design else f" · {len(savings)} savings found")}
     by_key = {row["key"]: row for row in rows if row.get("key")}
     placement: dict[str, dict] = {}
     for key, p in sorted(links["placement"].items(), key=lambda kv: (by_key.get(kv[0], {}).get("env") != "prod", -kv[1]["confidence"])):
         if key in by_key:  # production copies first, so traces land on prod
             placement.setdefault(p["code"], {"sys": p["code"], "compute": []})["compute"].append(by_key[key]["n"])
-    model = {"meta": {"region": inv["region"], "account": inv.get("account"), "collectedAt": inv["collectedAt"], "codeSource": code.get("source"),
+    model = {"meta": {"mode": inv.get("mode", "live"), "region": inv["region"], "account": inv.get("account"), "collectedAt": inv["collectedAt"], "codeSource": code.get("source"),
                       "company": ov.get("company") or ""},
              "infra": rows, "systems": labels, "placement": placement, "queues": links["queues"], "queueWorkers": links["queueWorkers"],
              "tgHost": links["tgHost"], "dbFor": links["dbFor"], "primaryDb": (ts.get("labels") or {}).get("db"),

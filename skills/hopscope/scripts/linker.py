@@ -73,6 +73,14 @@ def score_placement(code: dict, inv: dict, deploys: list[tuple[str, str]], servi
     result: dict[str, dict] = {}
     for x in ecs:
         key = f'{x["cluster"]}/{x["n"]}'
+        built = x.get("build")
+        if built is not None:
+            s = service_of(built.rstrip("/") + "/", services) or (built if built in services else None)
+            if s:
+                files = [f for f in str(x.get("buildFrom") or "").split(", ") if f]  # Terraform rows name every file in the folder
+                source = files[0] + (f" (+{len(files) - 1} more)" if len(files) > 1 else "") if files else "a deploy file"
+                result[key] = {"code": s, "confidence": 1.0, "evidence": [f"{source} builds {built}"]}
+                continue
         if x.get("ownImage") is False:
             continue  # public image (a database UI, a model gateway…): nothing in these repos builds it
         # Only names that identify this service; a container called "worker" says nothing.
@@ -120,8 +128,37 @@ def score_placement(code: dict, inv: dict, deploys: list[tuple[str, str]], servi
     return result
 
 
+QUEUE_WORDS = re.compile(r"queue|sqs", re.I)
+QUEUE_ENV = re.compile(r"\b([A-Z][A-Z0-9_]*QUEUE[A-Z0-9_]*)\b")
+CONSUMER = re.compile(r"receive_message|ReceiveMessage(Command)?|\.consume\(|@sqs|sqs_listener|\.poll\(")
+
+
+def _squash(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", re.sub(r"\.fifo$", "", name.lower()))
+
+
+def mentions_queue(text: str, stem: str) -> bool:
+    """Design mode has no traffic to confirm a queue, so a bare substring is not enough: the name must stand
+    alone as a string literal or the tail of a URL, or an environment variable named ...QUEUE must carry it."""
+    token = re.compile(rf"(?<![\w-]){re.escape(stem)}(?:\.fifo)?(?![\w-])")
+    for line in text.splitlines():
+        for m in token.finditer(line):
+            before, after = line[max(0, m.start() - 1):m.start()], line[m.end():m.end() + 1]
+            hint = QUEUE_WORDS.search(line) is not None
+            if before in ("'", '"') and after == before and (len(stem) >= 6 or hint):
+                return True
+            if before == "/" and m.start() >= 2 and re.match(r"\w", line[m.start() - 2]) and (hint or "amazonaws" in line):
+                return True
+        for var in QUEUE_ENV.findall(line):
+            core = _squash(re.sub(r"_?(QUEUE|URL|NAME)(?=_|$)_?", "", var))
+            if len(core) >= 4 and _squash(stem).endswith(core):
+                return True
+    return False
+
+
 def queue_links(code: dict, inv: dict, services: list[str], placement: dict[str, dict], base: Path) -> tuple[dict, dict]:
-    names = sorted({q["n"] for q in inv["sqs"] if q["sent"] > 0 or q["backlog"] > 0}, key=len, reverse=True)
+    design = inv.get("mode") == "design"  # no traffic numbers: every queue in the files counts
+    names = sorted({q["n"] for q in inv["sqs"] if design or q["sent"] > 0 or q["backlog"] > 0}, key=len, reverse=True)
     uses: dict[str, set[str]] = {}
     consumers: dict[str, set[str]] = {}
     stems = {n: re.sub(r"\.fifo$", "", n) for n in names}
@@ -134,9 +171,9 @@ def queue_links(code: dict, inv: dict, services: list[str], placement: dict[str,
         except OSError:
             continue
         for n in names:
-            if stems[n] in text:
+            if (mentions_queue(text, stems[n]) if design else stems[n] in text):
                 uses.setdefault(s, set()).add(n)
-                if re.search(r"receive_message|ReceiveMessageCommand|\.consume\(|@sqs|sqs_listener|poll", text):
+                if CONSUMER.search(text):
                     consumers.setdefault(n, set()).add(s)
     by_code: dict[str, list[str]] = {}
     for key, p in placement.items():  # queue URLs in the container environment are exact
@@ -146,6 +183,8 @@ def queue_links(code: dict, inv: dict, services: list[str], placement: dict[str,
                 q = r["v"].rsplit("/", 1)[1]
                 if q in names:
                     uses.setdefault(p["code"], set()).add(q)
+            elif design and "QUEUE" in r["k"].upper() and r["v"] in names:  # design rows keep the bare queue name
+                uses.setdefault(p["code"], set()).add(r["v"])
     for s, qs in uses.items():
         by_code[s] = sorted(qs)
     workers: dict[str, list[str]] = {}

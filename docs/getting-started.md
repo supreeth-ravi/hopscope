@@ -38,6 +38,20 @@ $PY skills/hopscope/scripts/hopscope.py review
 $PY skills/hopscope/scripts/hopscope.py serve
 ```
 
+## Without AWS (design mode)
+
+No AWS account, or not deployed yet? Hopscope can build the console from your code and your infrastructure files alone:
+
+```bash
+PY=$(bash skills/hopscope/scripts/setup.sh)
+$PY skills/hopscope/scripts/hopscope.py design --repo ~/src/api --repo ~/src/web
+$PY skills/hopscope/scripts/hopscope.py serve
+```
+
+It reads docker compose files, Terraform (`.tf`) and CloudFormation or SAM templates (YAML or JSON) found under the repos. You get the Architecture, Components and Trace views and a short list of design checks (routes with no service, queues with no dead-letter queue, production services planned with one task, services with no code found). There is no traffic, health or cost, and the Cost tab is hidden. No credentials are read or needed.
+
+Design mode is a first step: when you have an AWS account to read, `hopscope.py all` gives the live view. See [how it works](how-it-works.md#design-mode) for what the readers do and do not understand.
+
 ## Keeping it fresh
 
 The console is a snapshot. Re-run `hopscope.py all` (with `--overrides hopscope.json`) whenever you want new numbers, or ask the agent to schedule it.

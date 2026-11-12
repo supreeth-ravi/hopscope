@@ -365,7 +365,7 @@ let A = null; // AWS component inventory (aws.json)
 function edgeFor(name) {
   const row = byName[name];
   if (!A || !row?.key) return null;
-  for (const lb of A.lb) for (const r of lb.routes) if (r.services.includes(row.key)) return { lb: lb.n, when: r.when, port: r.port, scheme: lb.scheme };
+  for (const lb of A.lb) for (const r of lb.routes) if (r.services.includes(row.key)) return { lb: lb.n, when: r.when, port: r.port, scheme: lb.scheme, source: lb.source };
   return null;
 }
 
@@ -376,6 +376,9 @@ const lvlOf = (v) => (v >= 80 ? 'bad' : v < 1 ? 'warn' : '');
 const fmt = (v) => (v == null ? '—' : v < 1 ? v.toFixed(2) : v.toFixed(1));
 let byName = {};
 let D = null;
+let DESIGN = false; // built from files, not from a live account: no measured numbers anywhere
+const planned = (r) => (r && r.kind === 'ecs' ? `planned ${r.tasks} task${r.tasks === 1 ? '' : 's'}` : r ? r.size : '');
+const cpuTag = (r) => (DESIGN ? '' : ` · ${fmt(r?.cpu)}% cpu`);
 
 function serviceRoot(path) {
   const roots = [...(D?.services || []), ...Object.keys(PLACEMENT)].filter((k) => k && k !== '.').sort((a, b) => b.length - a.length);
@@ -390,7 +393,7 @@ function layerOf(p) {
 
 // ---------- views ----------
 function showView(v) {
-  if (!['overview', 'architecture', 'components', 'trace', 'cost'].includes(v)) v = 'overview';
+  if (!['overview', 'architecture', 'components', 'trace', 'cost'].includes(v) || (DESIGN && v === 'cost')) v = 'overview';
   document.querySelectorAll('.view').forEach((el) => (el.hidden = el.id !== 'v-' + v));
   document.querySelectorAll('.tab').forEach((t) => t.setAttribute('aria-selected', t.dataset.v === v));
   if (location.hash.slice(1) !== v) history.replaceState(null, '', '#' + v);
@@ -414,7 +417,7 @@ function renderOverview() {
 }
 function cellHtml(r) {
   const g = (lab, v, max = 100) => `<div class="gauge"><span>${lab}</span><div class="gt"><div class="gf ${lvlOf((v / max) * 100)}" style="width:${Math.max(2, Math.min(100, (v / max) * 100))}%"></div></div></div>`;
-  const body = r.kind === 'rds' ? g('CAP', r.cpu) : ['sqs', 'lb'].includes(r.kind) ? `<span class="gauge">${esc(r.size)}</span>` : g('CPU', r.cpu) + (r.mem != null ? g('MEM', r.mem) : '');
+  const body = DESIGN ? `<span class="gauge">${esc(planned(r))}</span>` : r.kind === 'rds' ? g('CAP', r.cpu) : ['sqs', 'lb'].includes(r.kind) ? `<span class="gauge">${esc(r.size)}</span>` : g('CPU', r.cpu) + (r.mem != null ? g('MEM', r.mem) : '');
   return `<button class="cell ${r.lvl || ''}" data-res="${esc(r.n)}" title="${esc(r.n)}"><span class="nm">${esc(r.n)}</span>${body}</button>`;
 }
 function openRes(name) {
@@ -425,7 +428,7 @@ function openRes(name) {
     <div><span class="label">${esc(SYS_LABEL[r.sys] || r.sys)} · ${r.env}</span><h2 class="mono" style="font-family:var(--f-mono);font-size:17px;word-break:break-all">${esc(r.n)}</h2></div>
     ${r.note ? `<div class="alert ${r.lvl}"><div><b>${r.lvl === 'bad' ? 'Critical' : 'Warning'}</b><span>${esc(r.note)}</span></div></div>` : ''}
     <dl><dt>Type</dt><dd>${{ ecs: 'ECS container service', ec2: 'EC2 server', rds: 'Aurora serverless database', sqs: 'SQS queue', lb: 'Load balancer' }[r.kind]}</dd>${edgeFor(r.n) ? `<dt>Public route</dt><dd class="mono">${esc(edgeFor(r.n).lb)}<br>${esc(edgeFor(r.n).when)}</dd>` : ''}<dt>Size</dt><dd>${esc(r.size)}</dd>
-    <dt>${r.kind === 'rds' ? 'Capacity used' : 'CPU avg'}</dt><dd class="mono">${fmt(r.cpu)}%</dd>${r.mem != null ? `<dt>Memory avg</dt><dd class="mono">${fmt(r.mem)}%</dd>` : ''}
+    ${DESIGN ? (r.kind === 'ecs' ? `<dt>Planned tasks</dt><dd class="mono">${r.tasks}</dd>` : '') : `<dt>${r.kind === 'rds' ? 'Capacity used' : 'CPU avg'}</dt><dd class="mono">${fmt(r.cpu)}%</dd>${r.mem != null ? `<dt>Memory avg</dt><dd class="mono">${fmt(r.mem)}%</dd>` : ''}`}
     <dt>Runs code</dt><dd class="mono">${roots.map(esc).join('<br>') || '—'}</dd><dt>APIs served</dt><dd>${routes.length || '—'}</dd></dl>
     ${routes.length ? `<div><span class="label">Sample APIs</span>${routes.slice(0, 12).map((x) => `<button class="route" data-route="${D.routes.indexOf(x)}"><span class="verb ${esc(x.m)}">${esc(x.m)}</span><span class="rp">${esc(x.p)}</span></button>`).join('')}</div>` : ''}`;
   $('#drawer').hidden = false; $('#dclose').focus();
@@ -465,7 +468,7 @@ function showModule(id) {
     <div><span class="label">${m.parent ? esc(label(m.parent)) + ' / module' : 'System'}</span><h2>${esc(m.label)}</h2><p class="hint" style="margin:6px 0 0">${esc(m.summary)}</p></div>
     <div class="kpis"><div class="kpi"><b>${m.files}</b><span>files</span></div><div class="kpi"><b>${(m.loc / 1000).toFixed(1)}k</b><span>lines</span></div>
       <div class="kpi"><b>${D.routes.filter((r) => { const fm = moduleOfRoute(r); return fm === id || fm.startsWith(id + '.'); }).length}</b><span>APIs</span></div></div>
-    <div><span class="label">Runs on</span><div class="chips" style="margin-top:6px">${compute.length ? compute.map((c) => `<button class="chip infra" data-res="${esc(c)}">${esc(c)} · ${fmt(byName[c]?.cpu)}% cpu</button>`).join('') : '<span class="hint">Not found in the AWS snapshot</span>'}</div></div>
+    <div><span class="label">Runs on</span><div class="chips" style="margin-top:6px">${compute.length ? compute.map((c) => `<button class="chip infra" data-res="${esc(c)}">${esc(c)}${cpuTag(byName[c])}</button>`).join('') : `<span class="hint">${DESIGN ? 'Not found in the infrastructure files' : 'Not found in the AWS snapshot'}</span>`}</div></div>
     <div><span class="label">Depends on</span><div class="chips" style="margin-top:6px">${ext.map((x) => `<span class="chip ext">${EXTERNAL[x]?.n || x}</span>`).join('') || '<span class="hint">No external systems detected</span>'}</div></div>
     ${outs.length || ins.length ? `<div class="tbl"><table><thead><tr><th>Direction</th><th>System</th><th>How</th></tr></thead><tbody>
       ${outs.slice(0, 12).map((l) => `<tr><td>calls →</td><td>${esc(label(l.b))}</td><td>${esc(l.k)} ${esc(l.label)}</td></tr>`).join('')}
@@ -608,9 +611,9 @@ function localBrief(t, S) {
   if (S.seq.some((s) => s.to === 'aurora') && db?.lvl) risks.push(`${db.n}: ${db.note}, so database calls on this path can slow down at peak.`);
   if (S.fe && byName[S.fe.ec2]) risks.push(`The page comes from a single EC2 server (${S.fe.ec2}). If it goes down, users can't reach this page.`);
   t.queues.filter((q) => q.backlog > 0).forEach((q) => risks.push(`${q.n} has ${q.backlog} message(s) waiting.`));
-  if (c && m && m.kind === 'ecs' && !m.lvl) risks.push(`${c} runs as a single task, so there is no spare copy if it restarts.`);
+  if (c && m && m.kind === 'ecs' && !m.lvl && m.tasks === 1) risks.push(`${c} runs as a single task, so there is no spare copy if it restarts.`);
   const cond = S.seq.filter((s) => s.kind === 'cond').length, asy = S.seq.filter((s) => s.kind === 'async').length;
-  return [`${t.r.m} ${t.r.p} enters through ${t.edge ? t.edge.lb : 'an internal call'} and runs on ${c || 'an undeployed service'}${m ? ` (${fmt(m.cpu)}% CPU${m.mem != null ? ', ' + fmt(m.mem) + '% memory' : ''})` : ''}.`,
+  return [`${t.r.m} ${t.r.p} enters through ${t.edge ? t.edge.lb : 'an internal call'} and runs on ${c || 'an undeployed service'}${m && !DESIGN ? ` (${fmt(m.cpu)}% CPU${m.mem != null ? ', ' + fmt(m.mem) + '% memory' : ''})` : ''}.`,
     stores.length ? `It talks to ${stores.join(', ')}.` : 'It does not call any data store.',
     `${S.seq.length} steps${cond ? `, ${cond} only under some conditions` : ''}${asy ? `, ${asy} in the background after the response` : ''}.`,
     risks.length ? '\nWatch:\n• ' + risks.slice(0, 3).join('\n• ') : ''].filter(Boolean).join('\n');
@@ -640,11 +643,11 @@ async function askClaudeNow() {
 function describeTrace(t) {
   const c = t.compute?.[0], m = byName[c];
   return [`Route: ${t.r.m} ${t.r.p} — ${t.r.t}: ${t.r.d}`, `Entry: ${t.edge ? `${t.edge.lb} (${t.edge.scheme}) rule ${t.edge.when}` : 'no load balancer rule found'}`,
-    `Queues: ${t.queues.map((q) => `${q.n} (${q.sent} sent/3d, backlog ${q.backlog})`).join('; ') || 'none'}`, `Compute: ${c || 'not deployed'}${m ? ` (${m.size}, CPU ${fmt(m.cpu)}%, memory ${fmt(m.mem)}%${m.note ? ', note: ' + m.note : ''})` : ''}`,
+    `Queues: ${t.queues.map((q) => (DESIGN ? q.n : `${q.n} (${q.sent} sent/3d, backlog ${q.backlog})`)).join('; ') || 'none'}`, `Compute: ${c || 'not deployed'}${m ? (DESIGN ? ` (${planned(m)})` : ` (${m.size}, CPU ${fmt(m.cpu)}%, memory ${fmt(m.mem)}%${m.note ? ', note: ' + m.note : ''})`) : ''}`,
     `Code files: ${t.touch.map((f) => D.files[f].p + (D.files[f].x.length ? ' [' + D.files[f].x.join(',') + ']' : '')).join('; ')}`,
     `Downstream services: ${t.downstream.map((d) => (PLACEMENT[d.root]?.compute?.[0] || d.root) + ' via ' + d.calls.map((x) => x.label).join(',')).join('; ') || 'none'}`,
     `External systems: ${t.ext.map((x) => EXTERNAL[x]?.n + ' (' + EXTERNAL[x]?.r + ')').join(', ') || 'none'}`,
-    `Database: ${M?.primaryDb || 'unknown'}${byName[M?.primaryDb] ? ` (${fmt(byName[M.primaryDb].cpu)}% of capacity${byName[M.primaryDb].note ? ', ' + byName[M.primaryDb].note : ''})` : ''}`,
+    `Database: ${M?.primaryDb || 'unknown'}${byName[M?.primaryDb] && !DESIGN ? ` (${fmt(byName[M.primaryDb].cpu)}% of capacity${byName[M.primaryDb].note ? ', ' + byName[M.primaryDb].note : ''})` : ''}`,
     `Sequence: ${buildSeq(t).seq.map((x, i) => `${i + 1}. [${x.kind}] ${x.title}`).join(' | ')}`].join('\n');
 }
 function traceAndDraw(i) { askCtl?.abort(); const t = traceRoute(i); drawArch(t); setAnalyst('built-in'); document.querySelectorAll('.cand').forEach((c) => c.setAttribute('aria-pressed', +c.dataset.route === i)); return t; }
@@ -692,7 +695,7 @@ function buildSeq(t) {
     seq.push({ from, to, kind, title, detail, code, why, via, first: title.split(': ').slice(1).join(': ') });
   };
   const fe = frontendFor(t.edge, host);
-  if (host) add('client', 'dns', 'sync', `Resolve ${host}`, 'DNS returns the public address of the load balancer.');
+  if (host && !DESIGN) add('client', 'dns', 'sync', `Resolve ${host}`, 'DNS returns the public address of the load balancer.');
   if (fe) {
     add('client', 'alb', 'sync', `GET https://${host}/`, 'The browser opens the page.');
     add('alb', 'fe', 'sync', `Rule: ${fe.when.replace('host-header=', 'host ')}`, `Forwarded to target group ${fe.tg} on EC2 ${fe.ec2}.`);
@@ -724,7 +727,7 @@ function buildSeq(t) {
   qs.forEach((q) => {
     const w = QUEUE_WORKER[q.n]; if (!w || seenWorker.has(w[0])) return; seenWorker.add(w[0]);
     const inferred = !queued.size;
-    add('sqs', 'svc:' + w[0], 'async', `${w[0]} consumes ${q.n}`, `${inferred ? 'Inferred from the service’s queue use. ' : ''}${q.sent} messages in 3 days, backlog ${q.backlog}.`);
+    add('sqs', 'svc:' + w[0], 'async', `${w[0]} consumes ${q.n}`, `${inferred ? 'Inferred from the service’s queue use. ' : ''}${DESIGN ? 'Defined in the infrastructure files.' : `${q.sent} messages in 3 days, backlog ${q.backlog}.`}`);
     const tn = targetNode(w[1].startsWith('SES') ? 'aws' : 'sql', w[1]);
     add('svc:' + w[0], tn.id, 'async', w[1], 'Background job after the response.');
   });
@@ -742,15 +745,15 @@ function layoutArch(t, S) {
   const put = (id, x, y, w, h, kind, title, sub, extra = {}) => (nodes[id] = { id, x, y, w, h, kind, title, sub, ...extra });
   put('client', 24, H / 2 - 34, 124, 68, 'client', 'Client', 'browser / app');
   if (used.has('internet')) put('internet', 24, H - 110, 124, 60, 'internet', 'External API', 'via NAT gateway');
-  put('dns', 190, 60, 130, 56, 'dns', 'Route 53', S.host || '');
-  if (used.has('alb')) put('alb', 362, H / 2 - 34, 150, 68, 'alb', t.edge.lb, `${t.edge.scheme === 'internal' ? 'internal' : 'public'} ALB · :${t.edge.port}`);
-  if (used.has('fe')) { const r = byName[S.fe.ec2]; put('fe', 545, 100, 250, 58, 'ec2', S.fe.ec2, `EC2 · ${r?.size?.split(' · ')[0] || ''} · CPU ${fmt(r?.cpu)}%`, { lvl: r?.lvl }); }
+  if (!DESIGN) put('dns', 190, 60, 130, 56, 'dns', 'Route 53', S.host || '');  // the files say nothing about DNS
+  if (used.has('alb')) put('alb', 362, H / 2 - 34, 150, 68, 'alb', t.edge.lb, t.edge.source === 'compose' ? `${t.edge.scheme === 'internal' ? 'internal' : 'published'} port · :${t.edge.port}` : `${t.edge.scheme === 'internal' ? 'internal' : 'public'} ALB · :${t.edge.port}`);
+  if (used.has('fe')) { const r = byName[S.fe.ec2]; put('fe', 545, 100, 250, 58, 'ec2', S.fe.ec2, `EC2 · ${r?.size?.split(' · ')[0] || ''}${DESIGN ? '' : ' · CPU ' + fmt(r?.cpu) + '%'}`, { lvl: r?.lvl }); }
   const c = byName[t.compute[0]];
-  put('task', 545, used.has('fe') ? 200 : 136, 250, taskH, 'task', t.compute[0] || 'service', c ? `ECS Fargate · ${c.size} · CPU ${fmt(c.cpu)}%${c.mem != null ? ' · mem ' + fmt(c.mem) + '%' : ''}` : 'not in AWS snapshot', { calls, lvl: c?.lvl });
+  put('task', 545, used.has('fe') ? 200 : 136, 250, taskH, 'task', t.compute[0] || 'service', c ? (DESIGN ? `ECS · ${planned(c)}` : `ECS Fargate · ${c.size} · CPU ${fmt(c.cpu)}%${c.mem != null ? ' · mem ' + fmt(c.mem) + '%' : ''}`) : (DESIGN ? 'not in the files' : 'not in AWS snapshot'), { calls, lvl: c?.lvl });
   let sy = nodes.task.y + taskH + 26;
-  svcIds.forEach((id) => { const n = id.slice(4), r = byName[n]; put(id, 545, sy, 250, 56, 'svc', n, r ? `ECS · CPU ${fmt(r.cpu)}%${r.mem != null ? ' · mem ' + fmt(r.mem) + '%' : ''}` : 'ECS service', { lvl: r?.lvl }); sy += 72; });
+  svcIds.forEach((id) => { const n = id.slice(4), r = byName[n]; put(id, 545, sy, 250, 56, 'svc', n, r ? (DESIGN ? `ECS · ${planned(r)}` : `ECS · CPU ${fmt(r.cpu)}%${r.mem != null ? ' · mem ' + fmt(r.mem) + '%' : ''}`) : 'ECS service', { lvl: r?.lvl }); sy += 72; });
   const db = byName[M?.primaryDb];
-  if (used.has('aurora')) put('aurora', 830, 110, 162, 70, 'aurora', 'Database', `${M?.primaryDb || 'database'} · ${fmt(db?.cpu)}% of capacity`, { lvl: db?.lvl });
+  if (used.has('aurora')) put('aurora', 830, 110, 162, 70, 'aurora', 'Database', `${M?.primaryDb || 'database'}${DESIGN ? '' : ' · ' + fmt(db?.cpu) + '% of capacity'}`, { lvl: db?.lvl });
   if (used.has('valkey')) put('valkey', 830, 220, 162, 62, 'valkey', 'Cache', 'ElastiCache');
   const mLabel = { cognito: ['Amazon Cognito', 'user pool'], sqs: ['Amazon SQS', S.queues.map((q) => q.n).join(', ') || 'queue'], ses: ['Amazon SES', 'email delivery'], s3: ['Amazon S3', 'buckets'], secrets: ['Secrets Manager', 'secrets'], lambda: ['AWS Lambda', 'functions'] };
   managed.forEach((id, i) => put(id, 1050, 330 + i * 82, 220, 62, id.startsWith('aws:') ? 'aws' : id, (mLabel[id] || [id.slice(4)])[0], (mLabel[id] || ['', 'AWS service'])[1]));
@@ -1044,9 +1047,10 @@ function renderOps() {
   const s = (T && T.series) || {}, L = (T && T.labels) || {}, sum = (a) => (a || []).reduce((x, y) => x + y, 0);
   const st = M.status;
   $('#status-strip').className = 'status-strip ' + st.state;
-  $('#status-strip').innerHTML = `<span class="status-pill ${st.state}"><i></i>${{ bad: 'Degraded', warn: 'Watch', ok: 'Healthy' }[st.state]}</span>
+  const pill = DESIGN ? { bad: 'Design · issues', warn: 'Design · check', ok: 'Design' }[st.state] : { bad: 'Degraded', warn: 'Watch', ok: 'Healthy' }[st.state];
+  $('#status-strip').innerHTML = `<span class="status-pill ${st.state}"><i></i>${pill}</span>
     <div class="status-why"><b>${esc(st.headline)}</b><span>${esc(st.detail)}</span></div>
-    <span class="label">${esc(M.meta.region)} · last 72 h · collected ${esc(new Date(M.meta.collectedAt).toLocaleString())}</span>`;
+    <span class="label">${DESIGN ? 'from code and infrastructure files · no live numbers' : `${esc(M.meta.region)} · last 72 h · collected ${esc(new Date(M.meta.collectedAt).toLocaleString())}`}</span>`;
   const gs = (cls, name, val, unit, note, series, color) => `<div class="gs ${cls}"><div class="top"><span class="label">${name}</span></div><b>${val}<span class="unit"> ${unit}</span></b><span class="note">${note}</span>${series && series.length ? spark(series, color) : ''}</div>`;
   const req = sum(s.req), e5 = sum(s.elb5xx) + sum(s.e5xx), errPct = req ? (e5 / req) * 100 : 0;
   const dlq = (A?.sqs || []).filter((q) => q.dlq && q.backlog > 0);
@@ -1054,7 +1058,14 @@ function renderOps() {
   const cost = T?.dailyCost || [], half = Math.floor(cost.length / 2);
   const wk = (a) => (a.length ? sum(a.map((c) => c.usd)) / a.length : 0), prevW = wk(cost.slice(0, half)), lastW = wk(cost.slice(half));
   const qsum = (s.q0 || []).map((v, i) => v + (s.q1?.[i] || 0) + (s.q2?.[i] || 0));
-  $('#golden').innerHTML = [
+  const cnt = (arr) => (arr || []).length;
+  const tiles = DESIGN ? [
+    gs('', 'Services', String(INFRA.filter((r) => r.kind === 'ecs').length), 'planned', `${n0(INFRA.filter((r) => r.kind === 'ecs').reduce((a, r) => a + (r.tasks || 0), 0))} tasks in total`, null),
+    gs('', 'Databases', String(INFRA.filter((r) => r.kind === 'rds').length), 'defined', `${cnt(A?.cache)} cache${cnt(A?.cache) === 1 ? '' : 's'} · ${cnt(A?.search)} search`, null),
+    gs('', 'Queues', String(cnt(A?.sqs)), 'defined', `${cnt((A?.sqs || []).filter((q) => q.dlq))} dead-letter · ${cnt(A?.sns)} topics`, null),
+    gs('', 'Entry points', String(cnt(A?.lb)), 'load balancers', `${cnt((A?.lb || []).flatMap((l) => l.routes))} routing rules`, null),
+  ] : null;
+  $('#golden').innerHTML = tiles ? tiles.join('') : [
     L.lb ? gs('', 'Traffic', kfmt(req), 'requests', `${kfmt(req / 72)} per hour on ${esc(L.lb)}`, s.req, 'var(--signal)') : gs('', 'Traffic', '—', '', 'no public load balancer found', null),
     L.lb ? gs(errPct > 5 ? 'bad' : '', 'Errors', errPct.toFixed(1) + '%', '5xx', `${n0(sum(s.elb503))} × 503 · ${n0(sum(s.e5xx))} from app code`, s.elb5xx, 'var(--red)') : '',
     L.lb ? gs('', 'Latency', ((Math.max(0, ...(s.p95 || [0]))) * 1000).toFixed(0), 'ms p95', `median ${((Math.max(0, ...(s.p50 || [0]))) * 1000).toFixed(0)} ms`, (s.p95 || []).map((v) => v * 1000), 'var(--blue)') : '',
@@ -1106,18 +1117,18 @@ function renderAwsArch() {
   const usesChat = D?.files.some((f) => f.x.includes('chatapps'));
   if (usesChat) node('chat', 16, 214, 164, 64, { icon: 'internet', title: 'Chat apps', sub: 'webhooks' });
   node('ext', 16, 470, 164, 64, { icon: 'internet', title: 'External APIs', sub: 'via NAT / internet' });
-  node('r53', 212, 70, 170, 58, { icon: 'dns', title: 'Route 53', sub: 'DNS' });
+  if (!DESIGN) node('r53', 212, 70, 170, 58, { icon: 'dns', title: 'Route 53', sub: 'DNS' }); // nothing in the files says anything about DNS
   if (A.cdn?.length) node('cf', 212, 150, 170, 64, { icon: 's3', title: `CloudFront × ${A.cdn.length}`, sub: A.cdn.map((c) => c.n).slice(0, 2).join(' · ') });
   const apiUsed = (A.apigw || []).filter((a) => a.req > 0).length, lamUsed = (A.lambda || []).filter((f) => f.inv > 0).length;
-  if (A.apigw?.length) node('apigw', 212, 290, 170, 64, { icon: 'alb', title: `API Gateway × ${A.apigw.length}`, sub: `${apiUsed} used in 3 days`, lvl: apiUsed < A.apigw.length / 2 ? 'warn' : 'ok', note: `${A.apigw.length - apiUsed} idle` });
-  if (A.lambda?.length) node('lambda', 212, 384, 170, 64, { icon: 'lambda', title: `Lambda × ${n0(A.lambda.length)}`, sub: `${lamUsed} invoked in 3 days`, lvl: lamUsed < A.lambda.length / 2 ? 'warn' : 'ok', note: `${n0(A.lambda.length - lamUsed)} not called` });
+  if (A.apigw?.length) node('apigw', 212, 290, 170, 64, { icon: 'alb', title: `API Gateway × ${A.apigw.length}`, sub: DESIGN ? 'defined' : `${apiUsed} used in 3 days`, lvl: !DESIGN && apiUsed < A.apigw.length / 2 ? 'warn' : 'ok', note: DESIGN ? '' : `${A.apigw.length - apiUsed} idle` });
+  if (A.lambda?.length) node('lambda', 212, 384, 170, 64, { icon: 'lambda', title: `Lambda × ${n0(A.lambda.length)}`, sub: DESIGN ? 'defined' : `${lamUsed} invoked in 3 days`, lvl: !DESIGN && lamUsed < A.lambda.length / 2 ? 'warn' : 'ok', note: DESIGN ? '' : `${n0(A.lambda.length - lamUsed)} not called` });
   // Load balancers: public ones in the public subnet, internal ones under the app subnet.
   const envOfName = (n) => (/(^|[-_.])(stag|staging|stg|dev|test|qa)([-_.]|$)/i.test(n) ? 'staging' : 'prod');
   const lbs = A.lb.filter((l) => inEnv(envOfName(l.n))).sort((a, b) => b.req - a.req);
   const pub = lbs.filter((l) => l.scheme !== 'internal').slice(0, 5), internal = lbs.filter((l) => l.scheme === 'internal').slice(0, 2);
   pub.forEach((l, i) => { const errRate = l.req ? l.err / l.req : 0;
-    node('lb:' + l.n, 430, 110 + i * 100, 160, 66, { icon: 'alb', title: l.n, sub: `${l.type === 'application' ? 'ALB' : 'NLB'} · ${n0(l.req)} ${l.type === 'network' ? 'flows' : 'req'}`,
-      lvl: errRate > 0.05 ? 'bad' : l.req === 0 ? 'off' : 'ok', note: errRate > 0.05 ? `${n0(l.err)} errors in 3 days` : `${l.routes.length} routing rules` }); });
+    node('lb:' + l.n, 430, 110 + i * 100, 160, 66, { icon: 'alb', title: l.n, sub: DESIGN ? (l.source === 'compose' ? `published ports · ${l.routes.length}` : `${l.type === 'application' ? 'ALB' : 'NLB'} · ${l.routes.length} rules`) : `${l.type === 'application' ? 'ALB' : 'NLB'} · ${n0(l.req)} ${l.type === 'network' ? 'flows' : 'req'}`,
+      lvl: errRate > 0.05 ? 'bad' : l.req === 0 && !DESIGN ? 'off' : 'ok', note: errRate > 0.05 ? `${n0(l.err)} errors in 3 days` : `${l.routes.length} routing rules` }); });
   if (A.nat) node('nat', 430, 110 + pub.length * 100, 160, 56, { icon: 'internet', title: 'NAT gateway', sub: `× ${A.nat} · outbound internet` });
   // App subnet: one box per ECS cluster with its services, then EC2.
   const CX = 615, CW = 330, chipW = 156, chipH = 22;
@@ -1130,26 +1141,26 @@ function renderAwsArch() {
     items.forEach((r, i) => node('chip:' + r.n, CX + 8 + (i % 2) * (chipW + 6), y + 30 + Math.floor(i / 2) * (chipH + 5), chipW, chipH, { chip: true, res: r, parent: id }));
     y += h + 14;
   };
-  Object.entries(clusters).sort((a, b) => b[1].length - a[1].length).forEach(([c, items]) => chipBox('cl:' + c, `ECS · ${c}`, items, `${items.filter((r) => r.tasks).length} running`));
-  if (ec2.length) chipBox('cl:ec2', 'EC2 servers', ec2, `${ec2.length} running`, true);
-  internal.forEach((l) => { node('lb:' + l.n, CX, y, CW, 56, { icon: 'alb', title: l.n, sub: `internal ALB · ${n0(l.req)} req` }); y += 70; });
+  Object.entries(clusters).sort((a, b) => b[1].length - a[1].length).forEach(([c, items]) => chipBox('cl:' + c, `ECS · ${c}`, items, `${items.filter((r) => r.tasks).length} ${DESIGN ? 'planned' : 'running'}`));
+  if (ec2.length) chipBox('cl:ec2', 'EC2 servers', ec2, `${ec2.length} ${DESIGN ? 'planned' : 'running'}`, true);
+  internal.forEach((l) => { node('lb:' + l.n, CX, y, CW, 56, { icon: 'alb', title: l.n, sub: DESIGN ? (l.source === 'compose' ? `internal ports · ${l.routes.length}` : 'internal ALB') : `internal ALB · ${n0(l.req)} req` }); y += 70; });
   const appBottom = y;
   // Data subnet.
   const DX = 972, DW = 170;
   const rds = INFRA.filter((r) => r.kind === 'rds' && inEnv(r.env));
   let dy = 112;
   const dataNode = (id, title, sub, list, icon) => { node(id, DX, dy, DW, 40 + list.length * 18, { icon, title, sub, list }); dy += 58 + list.length * 18; };
-  if (rds.length) dataNode('aurora', `Databases × ${rds.length}`, 'RDS / Aurora', rds.map((r) => [r.n, `${Math.round(r.cpu)}% cap`, lvlOfRes(r)]), 'aurora');
+  if (rds.length) dataNode('aurora', `Databases × ${rds.length}`, 'RDS / Aurora', rds.map((r) => [r.n, DESIGN ? (r.size || '').slice(0, 14) : `${Math.round(r.cpu)}% cap`, lvlOfRes(r)]), 'aurora');
   const caches = (A.cache || []).filter((c) => inEnv(envOfName(c.n)));
-  if (caches.length) dataNode('valkey', `Cache × ${caches.length}`, 'ElastiCache', caches.map((c) => [c.n.replace(/-0+1-0+\d$|-00\d$/, ''), `${Math.round(c.mem)}% mem`, c.mem > 80 ? 'warn' : 'ok']), 'valkey');
+  if (caches.length) dataNode('valkey', `Cache × ${caches.length}`, 'ElastiCache', caches.map((c) => [c.n.replace(/-0+1-0+\d$|-00\d$/, ''), DESIGN ? c.engine || '' : `${Math.round(c.mem)}% mem`, !DESIGN && c.mem > 80 ? 'warn' : 'ok']), 'valkey');
   const os = (A.search || []).filter((s) => inEnv(envOfName(s.n)));
-  if (os.length) dataNode('search', `OpenSearch × ${os.length}`, 'search', os.map((s) => [s.n, `${Math.round(s.cpu)}% cpu`, s.cpu > 80 ? 'warn' : 'ok']), 'aws');
+  if (os.length) dataNode('search', `OpenSearch × ${os.length}`, 'search', os.map((s) => [s.n, DESIGN ? '' : `${Math.round(s.cpu)}% cpu`, !DESIGN && s.cpu > 80 ? 'warn' : 'ok']), 'aws');
   // Managed services that exist in the account.
   const MX = 1172, MW = 208;
   const sqsAct = (A.sqs || []).filter((q) => q.sent > 0 || q.backlog > 0), dlqBad = (A.sqs || []).filter((q) => q.dlq && q.backlog > 0);
   const managed = [
     A.cognito?.length && ['cognito', 'cognito', 'Amazon Cognito', `${A.cognito.length} user pools`, 'ok'],
-    A.sqs?.length && ['sqs', 'sqs', `Amazon SQS × ${A.sqs.length}`, `${sqsAct.length} active · ${dlqBad.length} DLQs failing`, dlqBad.length ? 'bad' : 'ok'],
+    A.sqs?.length && ['sqs', 'sqs', `Amazon SQS × ${A.sqs.length}`, DESIGN ? `${(A.sqs || []).filter((q) => q.dlq).length} dead-letter queues defined` : `${sqsAct.length} active · ${dlqBad.length} DLQs failing`, dlqBad.length ? 'bad' : 'ok'],
     (A.sns?.length || A.eventbridge?.length) && ['sns', 'sqs', `SNS × ${A.sns?.length || 0} · EventBridge × ${A.eventbridge?.length || 0}`, 'topics and rules', 'ok'],
     A.ses?.length && ['ses', 'ses', 'Amazon SES', A.ses.slice(0, 2).join(' · '), 'ok'],
     A.s3?.count && ['s3', 's3', `Amazon S3 × ${A.s3.count}`, 'buckets', 'ok'],
@@ -1228,7 +1239,7 @@ function renderAwsArch() {
   });
   $('#aws-arch').innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="AWS architecture"><rect width="${W}" height="${H}" fill="var(--bg)"/>${g.join('')}</svg>`;
   ARCH_MAP = { N, E };
-  $('#arch-info').innerHTML = `<b>${ecs.filter((r) => r.tasks).length}</b> ECS services and <b>${ec2.length}</b> EC2 servers across <b>${Object.keys(clusters).length}</b> clusters. Hover over any box to see what it connects to; click a service for details.`;
+  $('#arch-info').innerHTML = `<b>${ecs.filter((r) => r.tasks).length}</b> ECS services and <b>${ec2.length}</b> EC2 servers${DESIGN ? ' (as planned in the files)' : ''} across <b>${Object.keys(clusters).length}</b> clusters. Hover over any box to see what it connects to; click a service for details.`;
 }
 let ARCH_MAP = null;
 function archHover(id) {
@@ -1250,11 +1261,13 @@ function archHover(id) {
 }
 
 // ---------- AWS components ----------
+// meta is always escaped: it can carry strings read from infrastructure files. `pill` is trusted markup built by callers from constants.
 function comp(name, meta, { lvl = '', note = '', pill = '', idle = false } = {}) {
-  return `<div class="comp ${lvl} ${idle ? 'idle' : ''}">${pill}<span class="nm">${esc(name)}</span><span class="meta">${meta}</span>${note ? `<span class="note">${esc(note)}</span>` : ''}</div>`;
+  return `<div class="comp ${lvl} ${idle ? 'idle' : ''}">${pill}<span class="nm">${esc(name)}</span><span class="meta">${esc(meta)}</span>${note ? `<span class="note">${esc(note)}</span>` : ''}</div>`;
 }
 const n0 = (v) => Math.round(v).toLocaleString();
 function famTable(items, keyUsed, label) {
+  if (DESIGN) return '';  // idle/active families need traffic numbers
   const fams = {};
   items.forEach((x) => { const f = (fams[x.fam] ||= { n: x.fam, count: 0, used: 0 }); f.count++; if (x[keyUsed] > 0) f.used++; });
   return Object.values(fams).filter((f) => f.count > 3).sort((a, b) => b.count - a.count)
@@ -1266,15 +1279,18 @@ function renderComponents() {
   const lamUsed = A.lambda.filter((f) => f.inv > 0);
   const apiUsed = A.apigw.filter((a) => a.req > 0);
   const dlqs = A.sqs.filter((q) => q.dlq && q.backlog > 0);
-  const ecsLive = INFRA.filter((r) => r.kind === 'ecs' && r.cpu > 0).length;
-  $('#comp-kpis').innerHTML = [
+  const ecsLive = INFRA.filter((r) => r.kind === 'ecs' && (DESIGN ? r.tasks > 0 : r.cpu > 0)).length;
+  $('#comp-kpis').innerHTML = (DESIGN ? [
+    ['', A.lb.length, 'load balancers'], ['', A.apigw.length, 'API gateways defined'], ['', A.sqs.length, 'queues defined'], ['', A.lambda.length, 'Lambdas defined'],
+    ['', A.cache.length, 'caches'], ['', A.search.length, 'OpenSearch domains'], ['', A.s3.count, 'S3 buckets'], ['', A.sqs.filter((q) => q.dlq).length, 'dead-letter queues defined'],
+  ] : [
     ['', A.lb.length, 'load balancers'], ['', `${apiUsed.length}/${A.apigw.length}`, 'API gateways used'], ['', `${sqsUsed.length}/${A.sqs.length}`, 'queues active, 3 days'],
     ['', `${lamUsed.length}/${A.lambda.length}`, 'Lambdas invoked, 3 days'], ['', A.cache.length, 'caches'], ['', A.search.length, 'OpenSearch domains'],
     ['', A.s3.count, 'S3 buckets'], ['warn', n0(A.ecr), 'container image repos'], ['bad', dlqs.length, 'dead-letter queues with messages'],
-  ].map(([c, b, s]) => `<div class="kpi ${c}"><b>${b}</b><span>${s}</span></div>`).join('');
+  ]).map(([c, b, s]) => `<div class="kpi ${c}"><b>${b}</b><span>${s}</span></div>`).join('');
   const sections = [
-    ['edge', 'Edge and routing', edgeHtml()], ['compute', 'Compute', computeHtml(lamUsed, ecsLive)],
-    ['messaging', 'Queues and events', messagingHtml(sqsUsed)], ['data', 'Data stores', dataHtml()], ['platform', 'Identity, email and platform', platformHtml()],
+    ['edge', 'Edge and routing', edgeHtml()], ['compute', 'Compute', computeHtml(DESIGN ? A.lambda.slice() : lamUsed, ecsLive)],
+    ['messaging', 'Queues and events', messagingHtml(DESIGN ? A.sqs.slice() : sqsUsed)], ['data', 'Data stores', dataHtml()], ['platform', 'Identity, email and platform', platformHtml()],
   ];
   $('#comp-nav').innerHTML = sections.map(([id, t]) => `<a href="#components" data-jump="c-${id}">${t}</a>`).join('');
   $('#comp-body').innerHTML = sections.map(([id, t, html]) => `<div class="panel comp-sec" id="c-${id}"><div class="panel-head"><h2>${t}</h2></div>${html}</div>`).join('');
@@ -1282,9 +1298,9 @@ function renderComponents() {
 function edgeHtml() {
   const lbCards = A.lb.map((lb) => {
     const dead = lb.routes.filter((r) => r.services.length && r.services.every((s) => !INFRA.find((x) => x.key === s)?.tasks));
-    const lvl = lb.req === 0 ? '' : lb.err > lb.req * 0.05 ? 'bad' : dead.length ? 'warn' : '';
-    const note = lb.req === 0 ? 'No traffic in 3 days' : lb.err > lb.req * 0.05 ? `${n0(lb.err)} errors vs ${n0(lb.req)} ${lb.type === 'network' ? 'connections' : 'requests'}` : dead.length ? `${dead.length} rule(s) point at services with 0 tasks` : '';
-    return comp(lb.n, `${lb.type === 'application' ? 'ALB' : 'NLB'} · ${lb.scheme} · ${n0(lb.req)} ${lb.type === 'network' ? 'flows' : 'req'} / 3d · ${lb.routes.length} rules`, { lvl, note, idle: lb.req === 0 });
+    const lvl = lb.req === 0 || DESIGN ? '' : lb.err > lb.req * 0.05 ? 'bad' : dead.length ? 'warn' : '';
+    const note = DESIGN ? '' : lb.req === 0 ? 'No traffic in 3 days' : lb.err > lb.req * 0.05 ? `${n0(lb.err)} errors vs ${n0(lb.req)} ${lb.type === 'network' ? 'connections' : 'requests'}` : dead.length ? `${dead.length} rule(s) point at services with 0 tasks` : '';
+    return comp(lb.n, `${lb.source === 'compose' ? 'Compose ports' : lb.type === 'application' ? 'ALB' : 'NLB'} · ${lb.scheme}${DESIGN ? '' : ` · ${n0(lb.req)} ${lb.type === 'network' ? 'flows' : 'req'} / 3d`} · ${lb.routes.length} rules`, { lvl, note, idle: lb.req === 0 && !DESIGN });
   }).join('');
   const rules = A.lb.filter((lb) => lb.type === 'application').flatMap((lb) => lb.routes.map((r) => ({ lb: lb.n, ...r })));
   const rows = rules.map((r) => {
@@ -1292,50 +1308,51 @@ function edgeHtml() {
     const zero = r.services.length && r.services.every((s) => !INFRA.find((x) => x.key === s)?.tasks);
     return `<tr><td class="rp">${esc(r.lb)}</td><td class="rp">${esc(r.when.replace(/host-header=/g, '').replace(/path-pattern=/g, 'path '))}</td><td class="rp">${esc(target)}${r.services.length ? '' : ' <span class="pill mute">EC2 / IP</span>'}${zero ? ' <span class="pill red">0 tasks</span>' : ''}</td></tr>`;
   }).join('');
-  const cdn = A.cdn.map((d) => comp(d.n, `CloudFront → ${esc(d.origin.length > 20 ? 'Lambda URL' : d.origin)}${d.aliases.length ? ' · ' + esc(d.aliases.join(', ')) : ''}`)).join('');
-  const apis = A.apigw.filter((a) => a.req > 0).map((a) => comp(a.n, `API Gateway ${a.proto} · ${n0(a.req)} req / 3d`)).join('');
+  const cdn = A.cdn.map((d) => comp(d.n, `CloudFront → ${d.origin.length > 20 ? 'Lambda URL' : d.origin}${d.aliases.length ? ' · ' + d.aliases.join(', ') : ''}`)).join('');
+  const apis = A.apigw.filter((a) => DESIGN || a.req > 0).map((a) => comp(a.n, DESIGN ? `API Gateway ${a.proto}` : `API Gateway ${a.proto} · ${n0(a.req)} req / 3d`)).join('');
   return `<div class="comp-grid">${lbCards}</div>
     <h3 style="margin:18px 0 8px">Routing rules: hostname and path → service</h3><div class="tbl"><table><thead><tr><th>Load balancer</th><th>When</th><th>Goes to</th></tr></thead><tbody>${rows}</tbody></table></div>
     <h3 style="margin:18px 0 8px">CDN and API gateways in use</h3><div class="comp-grid">${cdn}${apis}</div>
-    <p class="hint">${A.apigw.length - A.apigw.filter((a) => a.req > 0).length} of ${A.apigw.length} API gateways had no requests in 3 days.</p>`;
+    ${DESIGN ? '' : `<p class="hint">${A.apigw.length - A.apigw.filter((a) => a.req > 0).length} of ${A.apigw.length} API gateways had no requests in 3 days.</p>`}`;
 }
 function computeHtml(lamUsed, ecsLive) {
-  const ec2 = INFRA.filter((r) => r.kind === 'ec2').map((r) => comp(r.n, `EC2 · ${esc(r.size)} · CPU ${fmt(r.cpu)}%`, { lvl: r.lvl, note: r.note })).join('');
-  const lam = lamUsed.sort((a, b) => b.inv - a.inv).map((f) => comp(f.n, `Lambda · ${f.mem} MB · ${n0(f.inv)} calls · ${Math.round(f.dur)} ms avg${f.err ? ' · ' + f.err + ' errors' : ''}`, { lvl: f.err ? 'warn' : '' })).join('');
-  return `<p class="hint" style="margin-top:0">${ecsLive} ECS containers are live (see Overview). Servers and the Lambda functions that actually ran:</p>
-    <div class="comp-grid">${ec2}</div><h3 style="margin:18px 0 8px">Lambda functions invoked in the last 3 days</h3><div class="comp-grid">${lam}</div>
-    <h3 style="margin:18px 0 8px">Lambda families</h3><div class="tbl"><table><thead><tr><th>Family</th><th style="text-align:right">Functions</th><th style="text-align:right">Invoked</th><th></th></tr></thead><tbody>${famTable(A.lambda, 'inv', 'all idle')}</tbody></table></div>
-    <p class="hint">${n0(A.lambda.length - lamUsed.length)} functions were not called in 3 days. Idle Lambdas cost nothing to run but add deployment clutter.</p>`;
+  const ec2 = INFRA.filter((r) => r.kind === 'ec2').map((r) => comp(r.n, `EC2 · ${r.size}${DESIGN ? '' : ` · CPU ${fmt(r.cpu)}%`}`, { lvl: r.lvl, note: r.note })).join('');
+  const lam = lamUsed.sort((a, b) => b.inv - a.inv).map((f) => comp(f.n, DESIGN ? `Lambda · ${f.mem} MB` : `Lambda · ${f.mem} MB · ${n0(f.inv)} calls · ${Math.round(f.dur)} ms avg${f.err ? ' · ' + f.err + ' errors' : ''}`, { lvl: f.err ? 'warn' : '' })).join('');
+  return `<p class="hint" style="margin-top:0">${DESIGN ? `${ecsLive} ECS services are planned (see Overview). Servers and Lambda functions in the files:` : `${ecsLive} ECS containers are live (see Overview). Servers and the Lambda functions that actually ran:`}</p>
+    <div class="comp-grid">${ec2}</div><h3 style="margin:18px 0 8px">${DESIGN ? 'Lambda functions' : 'Lambda functions invoked in the last 3 days'}</h3><div class="comp-grid">${lam}</div>
+    ${DESIGN ? '' : '<h3 style="margin:18px 0 8px">Lambda families</h3>'}${DESIGN ? '' : `<div class="tbl"><table><thead><tr><th>Family</th><th style="text-align:right">Functions</th><th style="text-align:right">Invoked</th><th></th></tr></thead><tbody>${famTable(A.lambda, 'inv', 'all idle')}</tbody></table></div>`}
+    ${DESIGN ? '' : `<p class="hint">${n0(A.lambda.length - lamUsed.length)} functions were not called in 3 days. Idle Lambdas cost nothing to run but add deployment clutter.</p>`}`;
 }
 function messagingHtml(sqsUsed) {
   const q = sqsUsed.sort((a, b) => b.sent - a.sent).map((x) => {
+    if (DESIGN) return comp(x.n, `SQS${x.fifo ? ' FIFO' : ''} · defined${x.redrive ? ' · redrive set' : ''}`, { pill: x.dlq ? '<span class="pill red">DLQ</span>' : '' });
     const stuck = x.backlog > 0 && x.age > 3600;
     const lvl = x.dlq && x.backlog > 0 ? 'bad' : stuck ? 'warn' : '';
     const note = x.dlq && x.backlog > 0 ? `${x.backlog} failed message(s), oldest ${Math.round(x.age / 3600)} h` : stuck ? `Backlog ${x.backlog}, oldest ${Math.round(x.age / 60)} min` : '';
     return comp(x.n, `SQS${x.fifo ? ' FIFO' : ''} · ${n0(x.sent)} sent / 3d · backlog ${x.backlog}`, { lvl, note, pill: x.dlq ? '<span class="pill red">DLQ</span>' : x.n.startsWith('staging') ? '<span class="pill mute">staging</span>' : '<span class="pill">prod</span>' });
   }).join('');
-  const sns = A.sns.map((t) => comp(t.n, `SNS · ${n0(t.published)} published / 3d`, { idle: !t.published })).join('');
+  const sns = A.sns.map((t) => comp(t.n, DESIGN ? 'SNS topic' : `SNS · ${n0(t.published)} published / 3d`, { idle: !DESIGN && !t.published })).join('');
   const eb = A.eventbridge.map((r) => comp(r, 'EventBridge rule')).join('');
   return `<div class="comp-grid">${q}</div>
-    <h3 style="margin:18px 0 8px">Idle queue families</h3><div class="tbl"><table><thead><tr><th>Family</th><th style="text-align:right">Queues</th><th style="text-align:right">Active</th><th></th></tr></thead><tbody>${famTable(A.sqs, 'sent', 'all idle')}</tbody></table></div>
-    <p class="hint">${A.sqs.length - sqsUsed.length} of ${A.sqs.length} queues had no messages in 3 days. Families of many similar queues are grouped above.</p>
+    ${DESIGN ? '' : `<h3 style="margin:18px 0 8px">Idle queue families</h3><div class="tbl"><table><thead><tr><th>Family</th><th style="text-align:right">Queues</th><th style="text-align:right">Active</th><th></th></tr></thead><tbody>${famTable(A.sqs, 'sent', 'all idle')}</tbody></table></div>
+    <p class="hint">${A.sqs.length - sqsUsed.length} of ${A.sqs.length} queues had no messages in 3 days. Families of many similar queues are grouped above.</p>`}
     <h3 style="margin:18px 0 8px">Topics and rules</h3><div class="comp-grid">${sns}${eb}</div>`;
 }
 function dataHtml() {
-  const rds = INFRA.filter((r) => r.kind === 'rds').map((r) => comp(r.n, `Aurora serverless · ${fmt(r.cpu)}% of max capacity`, { lvl: r.lvl, note: r.note })).join('');
-  const cache = A.cache.map((c) => comp(c.n, `${c.engine} · ${c.type} · CPU ${fmt(c.cpu)}% · mem ${fmt(c.mem)}% · ${n0(c.conns)} conns`)).join('');
-  const search = A.search.map((s) => comp(s.n, `OpenSearch · ${s.type} × ${s.count} · CPU ${fmt(s.cpu)}% · ${s.freeGB} GB free`,
+  const rds = INFRA.filter((r) => r.kind === 'rds').map((r) => comp(r.n, DESIGN ? `${r.size}` : `Aurora serverless · ${fmt(r.cpu)}% of max capacity`, { lvl: r.lvl, note: r.note })).join('');
+  const cache = A.cache.map((c) => comp(c.n, DESIGN ? `${c.engine} cache` : `${c.engine} · ${c.type} · CPU ${fmt(c.cpu)}% · mem ${fmt(c.mem)}% · ${n0(c.conns)} conns`)).join('');
+  const search = A.search.map((s) => comp(s.n, DESIGN ? 'OpenSearch domain' : `OpenSearch · ${s.type} × ${s.count} · CPU ${fmt(s.cpu)}% · ${s.freeGB} GB free`,
     { lvl: s.n.startsWith('staging') ? 'warn' : '', note: s.n.startsWith('staging') ? 'Staging audit-log cluster runs 24×7' : '' })).join('');
   const ddb = A.dynamodb.map((t) => comp(t, 'DynamoDB table')).join('');
-  const s3 = comp(`${A.s3.count} S3 buckets`, 'bucket names are not collected');
+  const s3 = DESIGN && !A.s3.count ? '' : comp(`${A.s3.count} S3 buckets`, DESIGN ? 'defined in the files' : 'bucket names are not collected');
   return `<div class="comp-grid">${rds}${cache}${search}${ddb}${s3}</div>`;
 }
 function platformHtml() {
   return `<div class="comp-grid">${A.cognito.map((p) => comp(p.n, 'Cognito user pool')).join('')}
-    ${comp('Amazon SES', 'Sending domains: ' + esc(A.ses.join(', ')))}
-    ${comp('NAT gateways', `${A.nat} available`)}
-    ${comp('Secrets Manager', `${A.secrets} secrets`)}
-    ${comp('ECR', `${n0(A.ecr)} image repositories`, A.ecr > 200 ? { lvl: 'warn', note: 'Many image repositories. Add a lifecycle policy to expire old images' } : {})}</div>`;
+    ${DESIGN && !A.ses.length ? '' : comp('Amazon SES', 'Sending domains: ' + A.ses.join(', '))}
+    ${DESIGN ? '' : comp('NAT gateways', `${A.nat} available`)}
+    ${DESIGN ? '' : comp('Secrets Manager', `${A.secrets} secrets`)}
+    ${DESIGN ? '' : comp('ECR', `${n0(A.ecr)} image repositories`, A.ecr > 200 ? { lvl: 'warn', note: 'Many image repositories. Add a lifecycle policy to expire old images' } : {})}</div>`;
 }
 
 // ---------- events ----------
@@ -1380,7 +1397,7 @@ showView(location.hash.slice(1) || 'overview');
 const load = (f, fallback) => fetch(f).then((r) => (r.ok ? r.json() : fallback)).catch(() => fallback);
 Promise.all([load('code.json', null), load('aws.json', null), load('flows.json', {}), load('ts.json', null), load('model.json', null)]).then(([d, a, fl, ts, model]) => {
   if (!d || !model) throw new Error('missing data');
-  D = d; F = fl; T = ts; M = model;
+  D = d; F = fl; M = model; DESIGN = M.meta.mode === 'design'; T = DESIGN ? null : ts;
   // Any collector may have been skipped (no permission, service unused): default every field so views still render.
   A = a && { lb: [], ecs: [], ec2: [], rds: [], sqs: [], sns: [], lambda: [], cache: [], search: [], apigw: [], cdn: [], cognito: [], dynamodb: [], ses: [], eventbridge: [],
     s3: { count: 0 }, nat: 0, ecr: 0, secrets: 0, eips: { total: 0, unattached: 0 }, ...a };
@@ -1394,6 +1411,18 @@ Promise.all([load('code.json', null), load('aws.json', null), load('flows.json',
   document.querySelector('.status > span:first-child').innerHTML = `<span class="dot"></span> ${esc(M.meta.region)}`;
   $('#ask').placeholder = EXAMPLES[0];
   $('#foot').innerHTML = `Sources: AWS (read-only) collected ${esc(new Date(M.meta.collectedAt).toLocaleString())} · code map from the ${esc(M.meta.codeSource || 'scanner')} (${n0(d.routes.length)} APIs, ${n0(d.files.length)} files, ${esc(d.generatedAt.slice(0, 10))}). Links between code and infrastructure are inferred; confirm them with <code>hopscope.py review</code>.`;
+  if (DESIGN) {
+    const skipped = (a?.skipped || []).length;
+    $('#arch-kicker').textContent = 'Architecture · from files';
+    $('#arch-title').textContent = `${M.meta.company || 'Platform'}, as designed`;
+    document.querySelector('.status > span:first-child').innerHTML = '<span class="dot"></span> design';
+    document.querySelector('.status > span:last-child').textContent = 'No AWS account read';
+    $('#foot').innerHTML = `Sources: infrastructure files (${n0((a?.sources || []).length)}) and the ${esc(M.meta.codeSource || 'scanner')} (${n0(d.routes.length)} APIs, ${n0(d.files.length)} files). No AWS account was read: traffic, health and cost appear when you run <code>hopscope.py all</code> with AWS signed in.`
+      + (skipped ? ` ${n0(skipped)} infrastructure file${skipped === 1 ? ' was' : 's were'} skipped because they could not be read: ${esc(a.skipped.slice(0, 5).map((x) => x.file).join(', '))}.` : '');
+    $('#tab-cost').hidden = true;
+    $('#tab-components').textContent = 'Components';
+    if (location.hash === '#cost') showView('overview');
+  }
   $('#examples').innerHTML = EXAMPLES.map((x) => `<button type="button">${esc(x)}</button>`).join('');
   const maxSpend = Math.max(1, ...SPEND.map((s) => s[1]));
   $('#spend tbody').innerHTML = SPEND.map(([n, c]) => `<tr><td>${esc(n)}</td><td style="width:40%"><div class="costbar" style="width:${(c / maxSpend) * 100}%"></div></td><td class="num">${c.toFixed(2)}</td></tr>`).join('');

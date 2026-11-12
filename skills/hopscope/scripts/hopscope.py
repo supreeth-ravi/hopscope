@@ -1,6 +1,7 @@
 """Hopscope: build a live ops view of your code and your AWS account.
 
     hopscope.py all     --region ap-south-1 --repo ~/src/app [--repo …] [--profile p] [--overrides hopscope.json] [--workdir .hopscope]
+    hopscope.py design  --repo ~/src/app [--repo …] [--overrides hopscope.json] [--workdir .hopscope]   # no AWS: code + compose/Terraform/CloudFormation files
     hopscope.py collect …same flags…        # gather data only
     hopscope.py build   [--workdir …]       # write the site from collected data
     hopscope.py review  [--workdir …]       # show links that need a human to confirm
@@ -52,6 +53,24 @@ def collect(a: argparse.Namespace, data: Path) -> None:
     print("5/6 hourly metrics and cost…")
     run("aws_timeseries.py", "--aws", str(data / "aws.json"), *prof, "--out", str(data / "ts.json"))
     print("6/6 health rules…")
+    run("rules.py", "--data", str(data), *ov)
+
+
+def design(a: argparse.Namespace, data: Path) -> None:
+    """The whole pipeline from code and infrastructure files only: no AWS calls."""
+    data.mkdir(parents=True, exist_ok=True)
+    ov = ["--overrides", str(Path(a.overrides).resolve())] if a.overrides else []
+    repos = [x for r in a.repo for x in ("--repo", str(Path(r).expanduser().resolve()))]
+    print("1/5 code map…")
+    run("code_scan.py", *repos, *(["--no-floorplan"] if a.no_floorplan else []), "--out", str(data / "code.json"))
+    print("2/5 infrastructure files…")
+    run("iac_scan.py", "--code", str(data / "code.json"), "--region", a.region or "design", "--out", str(data / "aws.json"))
+    print("3/5 call flows…")
+    run("call_flow.py", str(data / "code.json"), str(data / "flows.json"))
+    print("4/5 linking code to infrastructure…")
+    run("linker.py", "--aws", str(data / "aws.json"), "--code", str(data / "code.json"), *ov, "--out", str(data / "links.json"))
+    (data / "ts.json").unlink(missing_ok=True)  # metrics from an earlier live run would not match these files
+    print("5/5 design checks…")
     run("rules.py", "--data", str(data), *ov)
 
 
@@ -187,7 +206,7 @@ def serve(site: Path, port: int, engine: local_agent.Engine | None) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("cmd", choices=["all", "collect", "build", "review", "serve"])
+    ap.add_argument("cmd", choices=["all", "collect", "design", "build", "review", "serve"])
     ap.add_argument("--region")
     ap.add_argument("--profile")
     ap.add_argument("--repo", action="append", default=[])
@@ -205,7 +224,13 @@ def main() -> None:
         if not a.region or not a.repo:
             raise SystemExit("collect needs --region and at least one --repo")
         collect(a, data)
-    if a.cmd in ("all", "build"):
+    if a.cmd == "design":
+        if not a.repo:
+            raise SystemExit("design needs at least one --repo")
+        design(a, data)
+    if a.cmd == "design":
+        (site / "ts.json").unlink(missing_ok=True)  # a site from an earlier live run would still carry its metrics
+    if a.cmd in ("all", "design", "build"):
         build(data, site)
     if a.cmd == "review" or a.cmd == "all":
         review(data)

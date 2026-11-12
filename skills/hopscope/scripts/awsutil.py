@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import boto3
+if TYPE_CHECKING:
+    import boto3
 
 STAGING = re.compile(r"(^|[-_./])(stag|staging|stg|dev|development|test|qa|sandbox|preview)([-_./]|$)", re.I)
 # Environment values worth keeping: queue URLs and AWS endpoint hostnames only. Everything else may be a secret.
@@ -44,6 +45,8 @@ def safe_value(value: str) -> str | None:
 
 
 def session(profile: str | None = None, region: str | None = None) -> boto3.Session:
+    import boto3  # imported here so design mode (no AWS) never needs boto3
+
     return boto3.Session(profile_name=profile, region_name=region)
 
 
