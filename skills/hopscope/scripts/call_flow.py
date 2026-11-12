@@ -241,7 +241,10 @@ def handler_text(h):
         return "it fails"
     names = [n.id if isinstance(n, ast.Name) else getattr(n, "attr", "") for n in (h.type.elts if isinstance(h.type, ast.Tuple) else [h.type])]
     pretty = [re.sub(r"(Error|Exception)$", "", n) for n in names if n]
-    return "it fails" if not pretty or pretty == [""] or "Exception" in names else f"a {' or '.join(re.sub(r'([a-z])([A-Z])', r'\1 \2', p).lower() for p in pretty)} error happens"
+    if not pretty or pretty == [""] or "Exception" in names:
+        return "it fails"
+    spaced = " or ".join(re.sub(r"([a-z])([A-Z])", r"\1 \2", p).lower() for p in pretty)  # FooError -> foo error
+    return f"a {spaced} error happens"
 
 
 def walk_calls(fn, path=None):
