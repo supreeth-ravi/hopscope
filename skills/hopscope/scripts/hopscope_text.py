@@ -38,8 +38,9 @@ def impact_text(r: dict) -> str:
 def trace_text(t: dict) -> str:
     if "error" in t:
         sug = "\n".join(f"  {s['route']}" for s in t.get("suggestions", []))
-        return t["error"] + ("\nDid you mean:\n" + sug if sug else "")
-    lines = [f"{t['route']}" + (f"  ({t['title']})" if t["title"] else ""), f"  handler {t['handler']}  in {t['service'] or '?'}"]
+        return t["error"] + (("; pick one:\n" if t.get("ambiguous") else "\nDid you mean:\n") + sug if sug else "")
+    lines = [f"{t['route']}" + (f"  ({t['title']})" if t["title"] else ""), *([f"  ({t['matched']})"] if t.get("matched") else []),
+             f"  handler {t['handler']}  in {t['service'] or '?'}"]
     for e in t["entry"]:
         lines.append(f"  entry: {e['lb']} when {e['when']} -> {e['target']}")
     lines.append(f"  runs on: {', '.join(t['compute']) or 'no compute linked'}")

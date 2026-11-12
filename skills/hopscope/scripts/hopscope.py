@@ -103,7 +103,8 @@ def review(data: Path) -> None:
     if links["unplaced"]:
         print("Running ECS services with no code found:")
         for u in links["unplaced"]:
-            print(f"  {u}")
+            why = (links.get("unplacedWhy") or {}).get(u)
+            print(f"  {u}" + (f"  ({why})" if why else ""))
     if links.get("thirdParty"):
         print("Off-the-shelf images (public registry, not linked to code): " + ", ".join(links["thirdParty"]))
     print("Placed with good confidence:")

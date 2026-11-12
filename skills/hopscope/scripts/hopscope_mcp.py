@@ -30,7 +30,7 @@ import hopscope_query as q
 
 LATEST = "2025-06-18"
 SUPPORTED = (LATEST, "2025-03-26", "2024-11-05")
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 MAX_LINE = 1_000_000  # bytes; a request longer than this is refused unread
 
 INSTRUCTIONS = ("Hopscope maps this project's code onto its AWS setup (or its compose/Terraform/CloudFormation files). "
@@ -52,8 +52,9 @@ TOOLS: list[dict[str, Any]] = [
                      "required": ["query"], "additionalProperties": False}},
     {"name": "trace", "title": "Trace a route",
      "description": "What one API route touches: the load balancer rule, the compute it runs on, each step of its code path in order "
-                    "(file:line, kind, condition), and the queues, workers and database it reaches.",
-     "inputSchema": {"type": "object", "properties": {"route": _s("'METHOD /path' as find_routes returns it, or a path")},
+                    "(file:line, kind, condition), and the queues, workers and database it reaches. Free text ('checkout') traces the clearly "
+                    "best match (named in 'matched'), else returns the close candidates.",
+     "inputSchema": {"type": "object", "properties": {"route": _s("'METHOD /path' as find_routes returns it, a path, or words")},
                      "required": ["route"], "additionalProperties": False}},
     {"name": "who_calls", "title": "Who calls this",
      "description": "Files that import or call a file (or the file defining a function name), transitively, and the routes that reach it.",

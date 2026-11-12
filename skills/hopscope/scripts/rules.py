@@ -188,9 +188,15 @@ def evaluate_design(inv: dict, links: dict) -> list[list]:
     if singles:
         actions.append(["warn", f"{len(singles)} production service(s) planned with a single task", f'{", ".join(singles[:5])}: any restart or deploy is a short outage.',
                         "Set the desired count to at least 2 for services on the request path."])
-    if links.get("unplaced"):
-        actions.append(["warn", f'{len(links["unplaced"])} service(s) with no code found', ", ".join(links["unplaced"][:5]),
+    why = links.get("unplacedWhy") or {}
+    no_code = [k for k in links.get("unplaced") or [] if k in why]
+    unknown = [k for k in links.get("unplaced") or [] if k not in why]
+    if unknown:
+        actions.append(["warn", f"{len(unknown)} service(s) with no code found", ", ".join(unknown[:5]),
                         'Point Hopscope at the repo that builds them, or set them in hopscope.json under "placement".'])
+    if no_code:
+        actions.append(["warn", f"{len(no_code)} service(s) build a folder with no code scanned", "; ".join(f"{k} {why[k]}" for k in no_code[:5]),
+                        'Fine for data or config jobs; if one runs code, set it in hopscope.json under "placement".'])
     actions.sort(key=lambda a: {"bad": 0, "warn": 1}.get(a[0], 2))
     return actions
 

@@ -39,6 +39,27 @@ def test_find_routes_by_method_and_path(data: dict) -> None:
     assert len(q.find_routes(data, "account", limit=1)["routes"]) == 1
 
 
+def test_find_routes_ranks_whole_path_segments_first(data: dict) -> None:
+    assert q.find_routes(data, "checkout")["routes"][0]["route"] == "POST /cart/checkout"
+    assert q.find_routes(data, "skip")["routes"][0]["route"] == "POST /subscriptions/{sub_id}/skip"
+    assert q.find_routes(data, "post stock")["routes"][0]["route"] == "POST /beans/:id/stock"
+    top = q.find_routes(data, "orders")["routes"]
+    assert top[0]["route"] == "GET /orders" and top[0]["score"] > top[1]["score"]
+
+
+def test_trace_free_text_follows_a_clear_best_match(data: dict) -> None:
+    t = q.trace(data, "checkout")
+    assert t["route"] == "POST /cart/checkout" and "checkout" in t["matched"]
+    assert "matched" not in q.trace(data, "POST /cart/checkout")
+
+
+def test_trace_free_text_lists_close_candidates(data: dict) -> None:
+    t = q.trace(data, "account")
+    assert "2 routes match" in t["error"]
+    assert {s["route"] for s in t["suggestions"]} == {"POST /account/sign-in", "POST /account/sign-up"}
+    assert "error" in q.trace(data, "POST /orders")  # an explicit method and path is never swapped for another route
+
+
 def test_trace_sign_in(data: dict) -> None:
     t = q.trace(data, "POST /account/sign-in")
     assert t["route"] == "POST /account/sign-in"

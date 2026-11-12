@@ -12,7 +12,7 @@ Claude or Codex reads your AWS account and your code, links the two, and gives y
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757?style=flat-square)](https://code.claude.com/docs/en/overview)
 [![Codex plugin](https://img.shields.io/badge/Codex-plugin-111?style=flat-square)](docs/codex.md)
 [![Tests](https://img.shields.io/github/actions/workflow/status/supreeth-ravi/hopscope/test.yml?branch=main&style=flat-square&label=tests)](https://github.com/supreeth-ravi/hopscope/actions/workflows/test.yml)
-[![Version](https://img.shields.io/badge/version-0.4.0-111?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.4.1-111?style=flat-square)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111?style=flat-square)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-%E2%89%A53.10-111?style=flat-square)](https://www.python.org)
 [![AWS read-only](https://img.shields.io/badge/AWS-read--only-111?style=flat-square)](skills/hopscope/references/iam-policy.json)

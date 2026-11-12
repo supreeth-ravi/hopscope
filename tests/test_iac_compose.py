@@ -114,3 +114,81 @@ def test_known_host_ports_must_be_declared_or_well_known() -> None:
 def test_named_cluster_lb_names() -> None:
     part = iac_compose.read("services:\n  api: {build: ., ports: ['80:80'], expose: ['81']}\n", "deploy/docker-compose.yml")
     assert [lb["n"] for lb in part["lb"]] == ["deploy (compose)", "deploy (compose, internal)"]
+
+
+def test_build_folder_follows_a_dockerfile_below_the_context() -> None:
+    text = """
+services:
+  roaster: {build: {context: ../.., dockerfile: roaster/Dockerfile}}
+  admin: {build: {context: ., dockerfile: admin/Dockerfile.backend}}
+  beans: {build: {context: ./beans, dockerfile: Dockerfile}}
+  cups: {build: {context: ./cups, dockerfile: ../shared/Dockerfile}}
+  escaped: {build: {context: ../../.., dockerfile: kestrel/roaster/Dockerfile}}
+  odd: {build: {context: ., dockerfile: /abs/Dockerfile}}
+"""
+    rows = {r["n"]: r["build"] for r in iac_compose.read(text, "deploy/local/docker-compose.yml")["ecs"]}
+    assert rows == {"roaster": "roaster", "admin": "deploy/local/admin", "beans": "deploy/local/beans", "cups": "deploy/local/cups",
+                    "escaped": None, "odd": "deploy/local"}
+
+
+def test_cluster_names_carry_the_compose_file_variant() -> None:
+    text = "services:\n  api: {build: ., ports: ['80:80'], expose: ['81']}\n  db: {image: postgres:16}\n"
+    cases = {"deploy/docker-compose.yml": "deploy", "deploy/docker-compose.staging.yml": "deploy-staging",
+             "deploy/compose.prod.yaml": "deploy-prod", "docker-compose.yml": "compose", "docker-compose.dev.yml": "compose-dev"}
+    for rel, cluster in cases.items():
+        part = iac_compose.read(text, rel)
+        assert part["ecs"][0]["cluster"] == cluster, rel
+    staging = iac_compose.read(text, "deploy/docker-compose.staging.yml")
+    assert staging["ecs"][0]["env"] == "staging" and staging["rds"][0]["env"] == "staging"
+    assert [lb["n"] for lb in staging["lb"]] == ["deploy-staging (compose)", "deploy-staging (compose, internal)"]
+    assert staging["lb"][0]["routes"][0]["services"] == ["deploy-staging/api"]
+    assert [lb["n"] for lb in iac_compose.read(text, "compose.dev.yaml")["lb"]] == ["compose-dev", "compose-dev (internal)"]
+    assert iac_compose.read(text, "deploy/docker-compose.prod.yml")["ecs"][0]["env"] == "prod"
+
+
+ENV_FILE = """# kestrel coffee local settings
+DB_PASSWORD=hunter2-roast
+export API_TOKEN="tok_9f8e7d6c5b4a39281706"
+DATABASE_URL='postgres://app:s3cret-beans@db:5432/shop'
+ORDERS_QUEUE_URL=https://sqs.us-east-1.amazonaws.com/123456789012/kestrel-orders
+CACHE_HOST=old-cache
+BEANS_TABLE=kestrel-beans # the bean catalogue
+not a line
+"""
+
+
+def env_repo(tmp_path, env_file: str) -> str:
+    (tmp_path / "deploy").mkdir()
+    (tmp_path / "deploy" / ".env").write_text(ENV_FILE)
+    (tmp_path / "outside.env").write_text("ORDERS_QUEUE=leak\n")
+    return ("services:\n  cache: {image: redis:7}\n  db: {image: postgres:16}\n  api:\n    build: .\n"
+            f"    env_file: {env_file}\n    environment: {{CACHE_HOST: cache}}\n")
+
+
+def test_env_file_values_go_through_the_allowlist(tmp_path) -> None:
+    import json
+    text = env_repo(tmp_path, "[.env, missing.env, {path: ../../outside.env, required: false}, /etc/passwd]")
+    part = iac_compose.read(text, "deploy/docker-compose.yml", base=tmp_path)
+    refs = {r["k"]: r["v"] for r in part["ecs"][0]["refs"]}
+    assert refs == {"DATABASE_URL": "db", "ORDERS_QUEUE_URL": "https://sqs.us-east-1.amazonaws.com/************/kestrel-orders",
+                    "CACHE_HOST": "cache", "BEANS_TABLE": "kestrel-beans"}
+    dumped = json.dumps(part)
+    for secret in ("hunter2", "tok_", "s3cret", "123456789012", "leak", "API_TOKEN", "DB_PASSWORD"):
+        assert secret not in dumped
+
+
+def test_env_file_string_and_long_syntax(tmp_path) -> None:
+    for spec in (".env", "{path: .env, required: true}", "[{path: ./.env}]"):
+        import shutil
+        shutil.rmtree(tmp_path / "deploy", ignore_errors=True)
+        (tmp_path / "outside.env").unlink(missing_ok=True)
+        part = iac_compose.read(env_repo(tmp_path, spec), "deploy/docker-compose.yml", base=tmp_path)
+        assert {"k": "BEANS_TABLE", "v": "kestrel-beans"} in part["ecs"][0]["refs"], spec
+
+
+def test_env_file_is_ignored_without_a_base_and_capped(tmp_path) -> None:
+    part = iac_compose.read(env_repo(tmp_path, ".env"), "deploy/docker-compose.yml")
+    assert part["ecs"][0]["refs"] == [{"k": "CACHE_HOST", "v": "cache"}]
+    (tmp_path / "deploy" / ".env").write_text("".join(f"X{i}=1\n" for i in range(600)) + "LATE_TABLE=late\n")
+    part = iac_compose.read("services:\n  api:\n    build: .\n    env_file: .env\n", "deploy/docker-compose.yml", base=tmp_path)
+    assert all(r["k"] != "LATE_TABLE" for r in part["ecs"][0]["refs"])

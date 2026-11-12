@@ -106,6 +106,22 @@ def safe_ref(key: str, value: str, known_hosts: Mapping[str, Collection[int]] | 
     return re.sub(r"\b\d{12}\b", "************", out) if out else None
 
 
+# Exactly 12 digits standing alone: an AWS account number. Longer runs (epoch-ms suffixes, IDs) are
+# left intact so names still match the code that refers to them.
+ACCOUNT_NUMBER = re.compile(r"(?<!\d)\d{12}(?!\d)")
+
+
+def mask_numbers(obj: Any) -> Any:
+    """A copy with every standalone 12-digit number (an AWS account number) starred out, keys included."""
+    if isinstance(obj, str):
+        return ACCOUNT_NUMBER.sub("*" * 12, obj)
+    if isinstance(obj, dict):
+        return {mask_numbers(k): mask_numbers(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [mask_numbers(v) for v in obj]
+    return obj
+
+
 def env_of(name: str) -> str:
     return "staging" if STAGING.search(name) else "prod"
 
@@ -149,8 +165,9 @@ def empty_inventory(region: str) -> dict:
 def ecs_row(cluster: str, name: str, desired: int = 1, images: list[str] | None = None, env_vars: dict[str, Any] | None = None,
             build: str | None = None, build_from: str = "", source: str = "", size: str = "", tgs: list[str] | None = None,
             known_hosts: Mapping[str, Collection[int]] | Collection[str] | None = None) -> dict:
-    imgs = [i for i in (images or []) if i]
-    own = build is not None or not imgs or any(OWN_REGISTRY.search(i) for i in imgs)
+    full = [i for i in (images or []) if i]
+    own = build is not None or not full or any(OWN_REGISTRY.search(i) for i in full)
+    imgs = [n for i in full if (n := image_engine(i))]  # the repository name only: a registry host can carry the account number
     return {"cluster": cluster, "n": name, "running": desired, "desired": desired, "size": size, "images": imgs, "ownImage": own,
             "containers": [name], "refs": [{"k": k, "v": sv} for k, v in sorted((env_vars or {}).items()) if (sv := safe_ref(k, str(v), known_hosts)) is not None], "tgs": list(tgs or []),
             "env": env_of(f"{cluster}/{name}"), "cpu": 0, "mem": 0, "memMax": 0, "cpuMax": 0,

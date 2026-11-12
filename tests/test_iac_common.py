@@ -128,3 +128,23 @@ def test_more_leaks_are_dropped() -> None:
 def test_arn_key_only_on_a_word_boundary() -> None:
     row = c.ecs_row("x", "api", env_vars={"TOPIC_ARN": "orders-topic", "LEARNED": "abc"})
     assert row["refs"] == [{"k": "TOPIC_ARN", "v": "orders-topic"}]
+
+
+def test_ecr_image_keeps_only_the_repository_name() -> None:
+    r = c.ecs_row("shop", "roaster", images=["123456789012.dkr.ecr.us-east-1.amazonaws.com/kestrel/roaster:1.4@sha256:abc"])
+    assert r["images"] == ["roaster"] and r["ownImage"] is True
+    pub = c.ecs_row("shop", "cache-ui", images=["docker.io/kestrel/cache-ui:2"])
+    assert pub["images"] == ["cache-ui"] and pub["ownImage"] is False
+
+
+def test_mask_account_numbers_everywhere() -> None:
+    row = {"n": "api-123456789012", "refs": [{"k": "A", "v": "x/1234567890123"}], "keep": 5, "short": "12345678901"}
+    out = c.mask_numbers(row)
+    assert out == {"n": "api-************", "refs": [{"k": "A", "v": "x/1234567890123"}], "keep": 5, "short": "12345678901"}
+    assert row["n"] == "api-123456789012"  # the input is not changed
+
+
+def test_only_standalone_account_numbers_are_masked() -> None:
+    out = c.mask_numbers({"arn:aws:iam::123456789012:role/x": ["orders-1700000000000", "roaster-123456789012", "jobs-20240101123045"]})
+    assert list(out) == ["arn:aws:iam::************:role/x"]
+    assert out["arn:aws:iam::************:role/x"] == ["orders-1700000000000", "roaster-************", "jobs-20240101123045"]

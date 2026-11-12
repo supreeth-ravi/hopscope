@@ -1,3 +1,5 @@
+import json
+import re
 from pathlib import Path
 
 import linker
@@ -103,3 +105,71 @@ def test_design_queue_from_env_var_name_and_url(tmp_path: Path) -> None:
 def test_design_queue_from_container_env(tmp_path: Path) -> None:
     out = design_queue_links(tmp_path, {"a/x.py": "x = 1\n"}, "orders", refs=[{"k": "ORDERS_QUEUE", "v": "orders"}])
     assert out == {"a": ["orders"]}
+
+
+def test_evidence_never_carries_an_account_number(tmp_path: Path) -> None:
+    i = inv()
+    i["ecs"].append({"cluster": "prod", "n": "staff-roaster", "images": ["123456789012.dkr.ecr.us-east-1.amazonaws.com/staff-roaster:1"],
+                     "containers": ["staff-roaster"], "refs": [], "env": "prod", "running": 1})
+    deploys = [("staff/deploy.yml", "image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/staff-roaster:1\n")]
+    placement = linker.score_placement(code(tmp_path), i, deploys, ["backend", "staff", "orders"])
+    assert placement["prod/staff-roaster"]["code"] == "staff"
+    assert not re.search(r"[0-9]{12}", json.dumps(placement))
+
+
+def test_build_folder_with_no_scanned_code_stays_unplaced(tmp_path: Path) -> None:
+    c = code(tmp_path)
+    (tmp_path / "warehouse").mkdir()
+    (tmp_path / "warehouse" / "models.sql").write_text("select 1\n")
+    i = inv()
+    i["ecs"].append({"cluster": "compose", "n": "staff-warehouse", "images": [], "containers": ["staff-warehouse"], "refs": [], "env": "prod",
+                     "running": 1, "build": "warehouse", "buildFrom": "docker-compose.yml", "ownImage": True})
+    i["ecs"].append({"cluster": "compose", "n": "staff-gone", "images": [], "containers": ["staff-gone"], "refs": [], "env": "prod",
+                     "running": 1, "build": "elsewhere", "buildFrom": "docker-compose.yml", "ownImage": True})
+    placement = linker.score_placement(c, i, [], c["services"])
+    assert "compose/staff-warehouse" not in placement
+    assert placement["compose/staff-gone"]["code"] == "staff"  # a folder that is not in this repo: names still decide
+    assert linker.unscanned_builds(c, i, c["services"]) == {"compose/staff-warehouse": "builds warehouse, where no code was scanned"}
+
+
+def test_root_build_folder_is_not_unscanned(tmp_path: Path) -> None:
+    c = code(tmp_path)
+    i = inv()
+    i["ecs"].append({"cluster": "compose", "n": "staff-all", "images": [], "containers": ["staff-all"], "refs": [], "env": "prod",
+                     "running": 1, "build": ".", "buildFrom": "docker-compose.yml", "ownImage": True})
+    assert linker.unscanned_builds(c, i, c["services"]) == {}
+
+
+def test_database_link_prefers_the_store_from_the_same_file() -> None:
+    i = {"ecs": [{"cluster": "cups", "n": "api", "env": "prod", "buildFrom": "cups/docker-compose.yml", "refs": [{"k": "DB_HOST", "v": "postgres"}]}],
+         "rds": [{"n": "postgres", "endpoint": "postgres", "clusterEndpoint": "", "src": "beans/docker-compose.yml"},
+                 {"n": "postgres (cups)", "endpoint": "postgres", "clusterEndpoint": "", "src": "cups/docker-compose.yml"}]}
+    assert linker.db_links(i, {"cups/api": {"code": "cups", "confidence": 1.0, "evidence": []}}) == {"cups": "postgres (cups)"}
+
+
+def test_queue_host_without_a_queue_name_is_ignored(tmp_path: Path) -> None:
+    out = design_queue_links(tmp_path, {"a/x.py": "x = 1\n"}, "orders", refs=[{"k": "SQS_ENDPOINT", "v": "sqs.us-east-1.amazonaws.com"}])
+    assert out == {}
+
+
+def test_override_paths_from_a_parent_folder_resolve_to_services() -> None:
+    services = ["roaster", "apps/cups", "beans"]
+    assert linker.resolve_folder("roaster", services) == "roaster"
+    assert linker.resolve_folder("kestrel-coffee/roaster", services) == "roaster"
+    assert linker.resolve_folder("work/kestrel-coffee/apps/cups/", services) == "apps/cups"
+    assert linker.resolve_folder("kestrel-coffee/myroaster", services) is None
+    assert linker.resolve_folder("kestrel-coffee/old-shop", services) is None
+
+
+def test_overrides_are_resolved_or_sent_to_review(capsys) -> None:
+    ov = {"placement": {"prod/roaster-api": "kestrel-coffee/roaster", "prod/old": "kestrel-coffee/old-shop", "prod/gone": None},
+          "labels": {"kestrel-coffee/roaster": "Roaster", "kestrel-coffee/nope": "Nope"},
+          "queues": {"kestrel-coffee/beans": ["bean-events"], "nope": ["x"]}}
+    placement = {"prod/gone": {"code": "beans", "confidence": 0.9, "evidence": []}}
+    out = linker.apply_overrides(placement, ov, ["roaster", "beans"])
+    assert out["placement"] == {"prod/roaster-api": {"code": "roaster", "confidence": 1.0, "evidence": ["set in hopscope.json"]}}
+    assert out["review"] == [{"ecs": "prod/old", "code": "kestrel-coffee/old-shop", "confidence": 0.0,
+                              "evidence": ["hopscope.json points at kestrel-coffee/old-shop, which isn't a scanned folder"]}]
+    assert out["labels"] == {"roaster": "Roaster"} and out["queues"] == {"beans": ["bean-events"]} and out["ignored"] == {"prod/gone"}
+    err = capsys.readouterr().err
+    assert "kestrel-coffee/old-shop" in err and "kestrel-coffee/nope" in err and "queues" in err

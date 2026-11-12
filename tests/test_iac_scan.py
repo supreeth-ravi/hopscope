@@ -1,5 +1,6 @@
 # tests/test_iac_scan.py
 import json
+import re
 from pathlib import Path
 
 import iac_scan
@@ -107,3 +108,35 @@ def test_error_lists_skipped_files(tmp_path: Path, monkeypatch) -> None:
         assert "no infrastructure files" in str(e) and "docker-compose.yml" in str(e)
     else:
         raise AssertionError("expected SystemExit")
+
+
+def test_scan_masks_account_numbers_in_every_row(tmp_path: Path) -> None:
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n  roaster-123456789012:\n    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/kestrel/roaster:1\n    ports: ['80:80']\n")
+    inv = iac_scan.scan(tmp_path, "design")
+    assert inv["ecs"][0]["ownImage"] is True and inv["ecs"][0]["images"] == ["roaster"]
+    assert not re.search(r"[0-9]{12}", json.dumps(inv))
+
+
+def test_service_keys_are_unique_across_compose_files(tmp_path: Path) -> None:
+    text = "services:\n  api: {build: ., ports: ['80:80']}\n"
+    for rel in ("deploy/docker-compose.yml", "deploy/docker-compose.staging.yml", "kestrel/deploy/docker-compose.yml", "beans/deploy/docker-compose.yml"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text)
+    inv = iac_scan.scan(tmp_path, "design")
+    keys = [f'{r["cluster"]}/{r["n"]}' for r in inv["ecs"]]
+    assert len(keys) == 4 and len(set(keys)) == 4 and "deploy-staging/api" in keys
+    routed = sorted(s for lb in inv["lb"] for r in lb["routes"] for s in r["services"])
+    assert routed == sorted(keys) and len({lb["n"] for lb in inv["lb"]}) == 4
+
+
+def test_same_named_datastores_get_unique_display_names(tmp_path: Path) -> None:
+    text = "services:\n  postgres: {image: postgres:16}\n  redis: {image: redis:7}\n  search: {image: opensearchproject/opensearch:2}\n"
+    for rel in ("beans/docker-compose.yml", "cups/docker-compose.yml", "cups/docker-compose.staging.yml"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text)
+    inv = iac_scan.scan(tmp_path, "design")
+    assert sorted(d["n"] for d in inv["rds"]) == ["postgres", "postgres (cups)", "postgres (cups-staging)"]
+    assert sorted(d["n"] for d in inv["cache"]) == ["redis", "redis (cups)", "redis (cups-staging)"]
+    assert sorted(d["n"] for d in inv["search"]) == ["search", "search (cups)", "search (cups-staging)"]
+    assert {d["endpoint"] for k in ("rds", "cache", "search") for d in inv[k]} == {"postgres", "redis", "search"}

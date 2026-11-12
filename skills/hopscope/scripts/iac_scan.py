@@ -68,12 +68,51 @@ def _read_file(base: Path, rel: str) -> str | None:
     return None if p.stat().st_size > MAX_BYTES else p.read_text(errors="ignore")
 
 
+def _rename_cluster(part: dict, old: str, new: str) -> None:
+    """Move one file's services to another cluster name, with the routes and load balancer names that point at them."""
+    for x in part.get("ecs", []):
+        if x["cluster"] == old:
+            x["cluster"] = new
+    for lb in part.get("lb", []):
+        if lb["n"] == old or lb["n"].startswith(old + " ("):
+            lb["n"] = new + lb["n"][len(old):]
+        for r in lb["routes"]:
+            r["services"] = [new + s[len(old):] if s.startswith(old + "/") else s for s in r["services"]]
+
+
+def _unique_clusters(inv: dict, part: dict, files: list[str]) -> None:
+    """Two files can name the same cluster (two folders called deploy): the later one gets the file stem, then its folder path."""
+    taken = {f'{x["cluster"]}/{x["n"]}' for x in inv["ecs"]}
+    clusters = {x["cluster"] for x in inv["ecs"]}
+    for old in sorted({x["cluster"] for x in part.get("ecs", []) if f'{x["cluster"]}/{x["n"]}' in taken}):
+        rel = files[0]
+        folder = posixpath.dirname(rel).replace("/", "-")
+        options = [f"{old}-{Path(rel).stem}", *([f"{old} ({folder})"] if folder else []), *(f"{old}-{i}" for i in range(2, 1000))]
+        mine = {x["n"] for x in part["ecs"] if x["cluster"] == old}
+        new = next(o for o in options if o not in clusters and not any(f"{o}/{n}" in taken for n in mine))
+        _rename_cluster(part, old, new)
+        clusters.add(new)
+
+
+def _unique_data_names(inv: dict, part: dict) -> None:
+    """Same-named data stores from different files (two postgres, four redis): later ones show their cluster.
+    `endpoint` keeps the bare service name, which is what environment values refer to."""
+    for kind in ("rds", "cache", "search"):
+        names = {x["n"] for x in inv[kind]}
+        for x in part.get(kind, []):
+            if x["n"] in names and x.get("cluster"):
+                x["n"] = f'{x["n"]} ({x["cluster"]})'
+            names.add(x["n"])
+
+
 def scan(base: Path, region: str) -> dict:
     inv = iac_common.empty_inventory(region)
     singles, tf_dirs = _collect(base)
 
     def add(part: dict, files: list[str]) -> None:
         if _has_rows(part):
+            _unique_clusters(inv, part, files)
+            _unique_data_names(inv, part)
             iac_common.merge(inv, part)
             inv["sources"].extend(files)
 
@@ -81,7 +120,7 @@ def scan(base: Path, region: str) -> dict:
         try:
             text = _read_file(base, rel)
             if text is not None and worth_parsing(mod, text):
-                add(mod.read(text, rel), [rel])  # type: ignore[attr-defined]
+                add(iac_compose.read(text, rel, base=base) if mod is iac_compose else mod.read(text, rel), [rel])  # type: ignore[attr-defined]
         except Exception as e:  # one unreadable file must not stop the scan
             inv["skipped"].append({"file": rel, "error": type(e).__name__})
     for files in (tf_dirs[k] for k in sorted(tf_dirs)):
@@ -102,7 +141,7 @@ def scan(base: Path, region: str) -> dict:
         except Exception as e:
             inv["skipped"].append({"file": readable[0], "error": type(e).__name__})
     inv["sources"].sort()
-    return inv
+    return iac_common.mask_numbers(inv)  # a last pass: no account number leaves the scan, whatever field it hid in
 
 
 def main(argv: list[str] | None = None) -> None:

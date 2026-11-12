@@ -13,8 +13,11 @@ import json
 import math
 import os
 import re
+import sys
 from collections import Counter
 from pathlib import Path
+
+from iac_common import mask_numbers
 
 STOP = {"prod", "production", "staging", "stage", "stg", "dev", "test", "qa", "svc", "service", "services", "ecs", "app", "the", "main", "default",
         "src", "server", "fargate", "task", "container", "img", "image", "latest", "v1", "v2"}
@@ -55,6 +58,24 @@ def service_of(path: str, services: list[str]) -> str | None:
     return None
 
 
+def _built_service(built: str, services: list[str]) -> str | None:
+    return service_of(built.rstrip("/") + "/", services) or (built if built in services else None)
+
+
+def unscanned_builds(code: dict, inv: dict, services: list[str]) -> dict[str, str]:
+    """Services built from a folder that is in the repo but holds no scanned code (SQL, dbt, config): guessing
+    another folder by name would be wrong, so they stay unplaced with this reason."""
+    base = Path(code.get("base") or ".")
+    out = {}
+    for x in inv["ecs"]:
+        built = str(x.get("build") or "").rstrip("/")
+        if not built or built == "." or _built_service(built, services) or any(s.startswith(built + "/") for s in services):
+            continue
+        if (base / built).is_dir():
+            out[f'{x["cluster"]}/{x["n"]}'] = f"builds {built}, where no code was scanned"
+    return out
+
+
 def score_placement(code: dict, inv: dict, deploys: list[tuple[str, str]], services: list[str]) -> dict[str, dict]:
     """For each production ECS service, the code folder it most likely runs, with evidence."""
     ecs = inv["ecs"]
@@ -71,11 +92,14 @@ def score_placement(code: dict, inv: dict, deploys: list[tuple[str, str]], servi
     idf = {t: math.log(1 + len(ecs) / c) for t, c in df.items()}
     files_by_service = Counter(service_of(f["p"], services) for f in code["files"])
     result: dict[str, dict] = {}
+    unscanned = unscanned_builds(code, inv, services)
     for x in ecs:
         key = f'{x["cluster"]}/{x["n"]}'
         built = x.get("build")
+        if key in unscanned:
+            continue
         if built is not None:
-            s = service_of(built.rstrip("/") + "/", services) or (built if built in services else None)
+            s = _built_service(built, services)
             if s:
                 files = [f for f in str(x.get("buildFrom") or "").split(", ") if f]  # Terraform rows name every file in the folder
                 source = files[0] + (f" (+{len(files) - 1} more)" if len(files) > 1 else "") if files else "a deploy file"
@@ -125,6 +149,8 @@ def score_placement(code: dict, inv: dict, deploys: list[tuple[str, str]], servi
                 conf *= 0.5
                 best[2].append(f"close second ({runner_up:.1f} vs {best[0]:.1f})")
             result[key] = {"code": best[1], "confidence": round(conf, 2), "evidence": best[2]}
+    for p in result.values():  # evidence quotes deploy files and image names, which can carry an account number
+        p["evidence"] = [mask_numbers(e) for e in p["evidence"]]
     return result
 
 
@@ -180,8 +206,8 @@ def queue_links(code: dict, inv: dict, services: list[str], placement: dict[str,
         x = next(e for e in inv["ecs"] if f'{e["cluster"]}/{e["n"]}' == key)
         for r in x["refs"]:
             if "sqs." in r["v"]:
-                q = r["v"].rsplit("/", 1)[1]
-                if q in names:
+                q = r["v"].rsplit("/", 1)[-1]  # a bare SQS host names no queue
+                if "/" in r["v"] and q in names:
                     uses.setdefault(p["code"], set()).add(q)
             elif design and "QUEUE" in r["k"].upper() and r["v"] in names:  # design rows keep the bare queue name
                 uses.setdefault(p["code"], set()).add(r["v"])
@@ -200,6 +226,67 @@ def queue_links(code: dict, inv: dict, services: list[str], placement: dict[str,
     return by_code, workers
 
 
+def db_links(inv: dict, placement: dict[str, dict]) -> dict[str, str]:
+    """The database each code folder uses, from host names in its service's environment. Compose files can
+    each define a "postgres": the one from the service's own file wins."""
+    by_endpoint: dict[str, list[dict]] = {}
+    for d in inv["rds"]:
+        for ep in {d.get("endpoint") or "", d.get("clusterEndpoint") or ""}:
+            if ep:
+                by_endpoint.setdefault(ep.split(".")[0], []).append(d)
+    db_for: dict[str, str] = {}
+    for key, p in placement.items():
+        x = next(e for e in inv["ecs"] if f'{e["cluster"]}/{e["n"]}' == key)
+        for r in x["refs"]:
+            found = by_endpoint.get(re.sub(r"^[a-z]+://", "", r["v"]).split(".")[0])
+            if found and x["env"] == "prod":
+                same = [d for d in found if d.get("src") and d.get("src") == x.get("buildFrom")]
+                db_for.setdefault(p["code"], (same or found)[-1]["n"])
+    return db_for
+
+
+def resolve_folder(path: str, services: list[str]) -> str | None:
+    """A code folder from hopscope.json, as a scanned service. Overrides written when the code base was a parent
+    folder ("<repo>/payments") still match when Hopscope is pointed at the single repo ("payments")."""
+    parts = [x for x in str(path or "").strip().strip("/").split("/") if x]
+    for i in range(len(parts)):
+        cand = "/".join(parts[i:])
+        if cand in services:
+            return cand
+    return None
+
+
+def _not_scanned(path: str) -> str:
+    return f"hopscope.json points at {path}, which isn't a scanned folder"
+
+
+def apply_overrides(placement: dict[str, dict], ov: dict, services: list[str]) -> dict:
+    """hopscope.json placement, labels and queues, with every folder resolved to a scanned service. A folder that
+    matches none is not used: a placement goes to review, and each one is reported on stderr."""
+    placed, review = dict(placement), []
+    ignored = {k for k, v in (ov.get("placement") or {}).items() if v is None}
+    for key, s in (ov.get("placement") or {}).items():  # {"cluster/service": "code/folder"}; null = not our code
+        if s is None:
+            placed.pop(key, None)
+            continue
+        folder = resolve_folder(s, services)
+        if folder:
+            placed[key] = {"code": folder, "confidence": 1.0, "evidence": ["set in hopscope.json"]}
+        else:
+            placed.pop(key, None)
+            review.append({"ecs": key, "code": str(s), "confidence": 0.0, "evidence": [_not_scanned(str(s))]})
+            print(f"warning: placement of {key}: {_not_scanned(str(s))}", file=sys.stderr)
+    resolved: dict[str, dict] = {"labels": {}, "queues": {}}
+    for section in ("labels", "queues"):
+        for path, v in (ov.get(section) or {}).items():
+            folder = resolve_folder(path, services)
+            if folder:
+                resolved[section][folder] = v
+            else:
+                print(f"warning: {section} entry: {_not_scanned(str(path))}", file=sys.stderr)
+    return {"placement": placed, "review": review, "ignored": ignored, **resolved}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--aws", required=True)
@@ -212,38 +299,24 @@ def main() -> None:
     base = Path(code["base"])
     services = code["services"]
     placement = score_placement(code, inv, deploy_files(base), services)
-    for key, s in (ov.get("placement") or {}).items():  # {"cluster/service": "code/folder"}; null = not our code
-        if s is None:
-            placement.pop(key, None)
-        else:
-            placement[key] = {"code": s, "confidence": 1.0, "evidence": ["set in hopscope.json"]}
-    ignored = {k for k, v in (ov.get("placement") or {}).items() if v is None}
+    over = apply_overrides(placement, ov, services)
+    placement, ignored = over["placement"], over["ignored"]
     queues, workers = queue_links(code, inv, services, placement, base)
-    queues.update(ov.get("queues") or {})
+    queues.update(over["queues"])
     workers.update(ov.get("queueWorkers") or {})
     ec2_by_id = {e["id"]: e["n"] for e in inv["ec2"]}
     tg_host = {r["tg"]: ec2_by_id[r["instances"][0]] for lb in inv["lb"] for r in lb["routes"] if r["instances"] and r["instances"][0] in ec2_by_id}
-    db_by_endpoint = {}
-    for d in inv["rds"]:
-        for ep in (d["endpoint"], d["clusterEndpoint"]):
-            if ep:
-                db_by_endpoint[ep.split(".")[0]] = d["n"]
-    db_for: dict[str, str] = {}
-    for key, p in placement.items():
-        x = next(e for e in inv["ecs"] if f'{e["cluster"]}/{e["n"]}' == key)
-        for r in x["refs"]:
-            host = re.sub(r"^[a-z]+://", "", r["v"]).split(".")[0]
-            if host in db_by_endpoint and x["env"] == "prod":
-                db_for.setdefault(p["code"], db_by_endpoint[host])
+    db_for = db_links(inv, placement)
     code_to_compute: dict[str, list[str]] = {}
     for key, p in sorted(placement.items(), key=lambda kv: -kv[1]["confidence"]):
         code_to_compute.setdefault(p["code"], []).append(key.split("/", 1)[1])
-    labels = {s: (ov.get("labels") or {}).get(s) or re.sub(r"[_\-]+", " ", Path(s).name).strip().capitalize() for s in code_to_compute}
-    review = [{"ecs": k, **v} for k, v in placement.items() if v["confidence"] < REVIEW_BELOW]
+    labels = {s: over["labels"].get(s) or re.sub(r"[_\-]+", " ", Path(s).name).strip().capitalize() for s in code_to_compute}
+    review = [{"ecs": k, **v} for k, v in placement.items() if v["confidence"] < REVIEW_BELOW] + over["review"]
     unplaced = sorted(k for e in inv["ecs"] if (k := f'{e["cluster"]}/{e["n"]}') not in placement and k not in ignored and e["running"] and e.get("ownImage") is not False)
+    why = {k: v for k, v in unscanned_builds(code, inv, services).items() if k in unplaced}
     third_party = sorted(f'{e["cluster"]}/{e["n"]}' for e in inv["ecs"] if e.get("ownImage") is False)
     out = {"placement": placement, "codeToCompute": code_to_compute, "labels": labels, "queues": queues, "queueWorkers": workers,
-           "tgHost": tg_host, "dbFor": db_for, "review": review, "unplaced": unplaced, "thirdParty": third_party}
+           "tgHost": tg_host, "dbFor": db_for, "review": review, "unplaced": unplaced, "unplacedWhy": why, "thirdParty": third_party}
     json.dump(out, open(a.out, "w"), indent=1)
     print(f"links: {len(placement)} ECS services placed ({len(review)} to review, {len(unplaced)} unplaced), {sum(map(len, queues.values()))} queue links, "
           f"{len(workers)} queue workers, {len(tg_host)} EC2 targets -> {a.out}")

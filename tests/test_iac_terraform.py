@@ -200,7 +200,7 @@ resource "aws_ecs_service" "web" {
 }
 '''
     row = iac_terraform.read(tf, "main.tf")["ecs"][0]
-    assert row["images"] == ["nginx:1"] and row["refs"] == [{"k": "ORDERS_QUEUE", "v": "orders"}]
+    assert row["images"] == ["nginx"] and row["refs"] == [{"k": "ORDERS_QUEUE", "v": "orders"}]
 
 
 def test_target_group_kind_and_attachments() -> None:

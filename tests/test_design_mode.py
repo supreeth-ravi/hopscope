@@ -56,3 +56,17 @@ def test_design_removes_a_stale_site_ts_json(tmp_path: Path) -> None:
                          capture_output=True, text=True, env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)})
     assert res.returncode == 0, res.stdout + res.stderr
     assert not (work / "site" / "ts.json").exists()
+
+
+def test_design_output_never_carries_an_account_number(tmp_path: Path) -> None:
+    import re
+    repo, work = tmp_path / "shop", tmp_path / "work"
+    make_shop(repo)
+    ecr = "123456789012.dkr.ecr.us-east-1.amazonaws.com/kestrel/shop-api:1.4"
+    (repo / "shop-api" / "deploy.yml").write_text(f"image: {ecr}\n")
+    (repo / "docker-compose.prod.yml").write_text(f"services:\n  shop-api:\n    image: {ecr}\n    ports: ['443:8000']\n")
+    res = subprocess.run([sys.executable, str(SCRIPTS / "hopscope.py"), "design", "--repo", str(repo), "--workdir", str(work), "--no-floorplan"],
+                         capture_output=True, text=True, env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)})
+    assert res.returncode == 0, res.stdout + res.stderr
+    for f in [*(work / "data").glob("*.json"), *(work / "site").glob("*.json")]:
+        assert not re.search(r"[0-9]{12}", f.read_text()), f.name

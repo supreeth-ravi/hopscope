@@ -42,6 +42,15 @@ def test_query_unknown_route_suggests(tmp_path: Path) -> None:
     assert p.returncode == 1 and "GET /orders" in p.stdout
 
 
+def test_query_single_word(tmp_path: Path) -> None:
+    w = str(work(tmp_path))
+    p = run("query", "checkout", "--workdir", w)
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert p.stdout.startswith("POST /cart/checkout") and "best match for 'checkout'" in p.stdout
+    p = run("query", "account", "--workdir", w)
+    assert p.returncode == 1 and "pick one" in p.stdout and "POST /account/sign-up" in p.stdout
+
+
 def test_needs_target_and_data(tmp_path: Path) -> None:
     assert run("impact", "--workdir", str(work(tmp_path))).returncode != 0
     p = run("impact", "x.py", "--workdir", str(tmp_path / "empty"))

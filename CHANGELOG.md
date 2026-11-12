@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.1 — 2026-11-12
+
+Fixes from running design mode on a large monorepo:
+
+- **No account numbers in the output.** Design rows keep only an image's repository name (whether it is your own image is still decided from the full reference), the infrastructure scan stars out every standalone 12-digit number (keys included), and link evidence is masked the same way. Longer digit runs, such as epoch suffixes in queue names, are left alone so the names still match the code.
+- **Compose build folders.** A `dockerfile:` in a folder below the build context (context at the repo root, `dockerfile: admin/Dockerfile`) now places the service on that folder. Contexts outside the repo are still rejected.
+- **Folders with no code stay unplaced.** A service built from a folder that holds no scanned code (SQL, dbt, config) is no longer guessed onto another service by name; links.json records why under `unplacedWhy` and the design checks list it separately.
+- **Compose variants.** `docker-compose.<variant>.yml` maps to its own cluster (`<folder>-<variant>`, `compose-<variant>` at the root) and staging/dev/test variants count as staging. Service keys are guaranteed unique across files.
+- **`env_file:` is read.** Paths, lists and the `{path, required}` form, next to the compose file and only inside the repo, 500 lines per file. Inline `environment` wins, and every value still goes through the same allowlist, so no credentials are kept; plain host names under `*_HOST` keys are kept, as for inline values.
+- **Same-named data stores.** A second `postgres` or `redis` from another compose file shows as `redis (<cluster>)`; its endpoint stays the bare service name and database links prefer the store from the service's own file.
+- **hopscope.json folders resolve.** Placement, label and queue entries written for a parent folder (`<repo>/payments`) match the scanned service (`payments`). An entry that matches no scanned folder is not used; a placement goes to review with the reason, and each one is reported as a warning.
+- **Linker crash.** An environment value holding only an SQS host (no queue name) no longer stops the linker.
+- **Plain-word route queries.** `hopscope.py query checkout`, `find_routes` and the MCP `trace` tool match words against the method, path segments and title; a clearly best route is traced, otherwise the close candidates are listed.
+
 ## 0.4.0 — 2026-11-12
 
 - **MCP server.** `hopscope_mcp.py` gives agents seven read-only tools over a build: `find_routes`, `trace`, `who_calls`, `what_runs`, `impact`, `resources` and `health`. Standard-library Python over stdio (MCP 2025-06-18, older 2025-03-26 and 2024-11-05 clients accepted). The Claude Code plugin registers it for `<project>/.hopscope`; Codex users add it with `codex mcp add` (see docs/codex.md).

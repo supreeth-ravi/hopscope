@@ -65,6 +65,13 @@ def test_design_checks() -> None:
     assert "1 service(s) with no code found" in titles
 
 
+def test_build_folders_with_no_code_get_their_own_warning() -> None:
+    links = {"unplaced": ["prod/api", "compose/dbt"], "unplacedWhy": {"compose/dbt": "builds analytics, where no code was scanned"}}
+    actions = {a[1]: a for a in rules.evaluate_design(design_inv(), links)}
+    assert actions["1 service(s) with no code found"][2] == "prod/api"
+    assert actions["1 service(s) build a folder with no code scanned"][2] == "compose/dbt builds analytics, where no code was scanned"
+
+
 def test_design_rows_print_no_missing_numbers() -> None:
     inv = design_inv()
     inv["ec2"] = []

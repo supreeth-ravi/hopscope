@@ -178,6 +178,27 @@ def _entry(data: dict, compute: list[str]) -> list[dict]:
 
 # ---- the questions -------------------------------------------------------------------------------
 
+def _segments(path: str) -> list[str]:
+    return [s for s in path.lower().split("/") if s]
+
+
+def _word_score(w: str, method: str, path: str, title: str) -> int:
+    """Whole path segments count most (the last one a little more), then words inside a segment, the title
+    and finally any substring of the path."""
+    if w == method:
+        return 2
+    segs = _segments(path)
+    if "/" in w:
+        return 5 if _norm(w) == _norm(path) else 3 if w in path else 0
+    if w in segs:
+        return 6 + (1 if segs[-1] == w else 0)
+    if any(w in re.split(r"[-_.:{}]+", s) for s in segs):
+        return 4
+    if w in re.split(r"\W+", title):
+        return 2
+    return 1 if w in path else 0
+
+
 def find_routes(data: dict, q: str, limit: int = 10) -> dict:
     """Routes matching a method, path or title words, best first."""
     q = clip(q)
@@ -188,13 +209,7 @@ def find_routes(data: dict, q: str, limit: int = 10) -> dict:
     for i, r in enumerate(data["code"].get("routes", [])):
         method, path, title = r.get("m", "").lower(), r.get("p", "").lower(), r.get("t", "").lower()
         score = 100 if i == exact else 0
-        for w in words:
-            if w == method:
-                score += 2
-            elif w in path:
-                score += 3 + (2 if _norm(w) == _norm(path) else 0)
-            elif w in re.split(r"\W+", title) or any(w in seg for seg in re.split(r"[/_-]+", path)):
-                score += 2
+        score += sum(_word_score(w, method, path, title) for w in words)
         if score:
             scored.append((-score, i, r))
     scored.sort(key=lambda x: (x[0], x[1]))
@@ -204,11 +219,32 @@ def find_routes(data: dict, q: str, limit: int = 10) -> dict:
                                    for s, _, r in scored[:limit]]}
 
 
+CLEAR_MIN = 4  # at least a word of the path
+
+
+def _best_free_text(data: dict, route: str) -> tuple[int | None, list[dict]]:
+    """For a free-text query (no path given): the route index when one match is clearly best, else the candidates."""
+    found = find_routes(data, route, 10)["routes"]
+    if "/" in route or not found:
+        return None, found[:5]
+    top = found[0]["score"]
+    if top >= CLEAR_MIN and (len(found) == 1 or found[1]["score"] < top):
+        return _route_index(data, found[0]["route"]), found[:5]
+    return None, [f for f in found if f["score"] == top] or found[:5]
+
+
 def trace(data: dict, route: str | int) -> dict:
-    """One route's code path in order, the compute it runs on, and the queues, workers and database it reaches."""
+    """One route's code path in order, the compute it runs on, and the queues, workers and database it reaches.
+    A free-text query ('checkout') follows the clearly best matching route, else lists the close candidates."""
     idx = _route_index(data, route)
+    matched = ""
     if idx is None:
-        return {"error": f"no route matches {clip(route)!r}", "suggestions": find_routes(data, str(route), 5)["routes"]}
+        idx, found = _best_free_text(data, str(route))
+        if idx is None:
+            close = len(found) > 1 and "/" not in str(route) and found[0]["score"] >= CLEAR_MIN
+            msg = f"{len(found)} routes match {clip(route)!r}" if close else f"no route matches {clip(route)!r}"
+            return {"error": msg, "suggestions": found, "ambiguous": close}
+        matched = f"best match for {clip(route)!r}"
     r = data["code"]["routes"][idx]
     paths = _paths(data)
     handler_path = paths[r["f"]] if 0 <= r.get("f", -1) < len(paths) else ""
@@ -221,7 +257,7 @@ def trace(data: dict, route: str | int) -> dict:
             "compute": compute, "entry": _entry(data, compute), "steps": out_steps,
             "traced": bool(steps) or handler_path.endswith(".py"),
             "queues": _queues_reached(data, service, steps), "database": _database(data, service, steps),
-            "reaches": sorted({clip(s[1]) for s in steps if len(s) > 1 and s[1] != "call"})}
+            "reaches": sorted({clip(s[1]) for s in steps if len(s) > 1 and s[1] != "call"}), **({"matched": matched} if matched else {})}
 
 
 def _match_files(data: dict, target: str) -> list[int]:
