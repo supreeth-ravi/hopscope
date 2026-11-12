@@ -47,3 +47,16 @@ If neither CLI is installed, the console still works with its built-in analysis.
 | AWS sign-in | `! aws login` inside the session | `aws login` in your terminal |
 | Where the console opens | A private page in the Claude app, or `http://127.0.0.1:8765/` | `http://127.0.0.1:8765/` |
 | Analyst and Ask | Your Claude account | Your Codex sign-in |
+
+## MCP server
+
+The Claude Code plugin registers Hopscope's MCP server itself. In Codex, add it once with the path to the plugin's script and your project's `.hopscope` folder (absolute paths, so it works from any folder):
+
+```bash
+codex mcp add hopscope -- python3 /path/to/hopscope/skills/hopscope/scripts/hopscope_mcp.py --workdir /path/to/your/project/.hopscope
+```
+
+The tools (`impact`, `trace`, `find_routes`, `who_calls`, `what_runs`, `resources`, `health`) read the build in that folder; run a build first. The server only reads those files: no network, no AWS, no processes, no writes.
+
+The plugin doesn't bundle the server for Codex: Codex does not fill in the plugin's install path (`${CLAUDE_PLUGIN_ROOT}`) in MCP server arguments the way Claude Code does, so the registration Claude Code uses would not start there.
+

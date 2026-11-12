@@ -52,6 +52,20 @@ It reads docker compose files, Terraform (`.tf`) and CloudFormation or SAM templ
 
 Design mode is a first step: when you have an AWS account to read, `hopscope.py all` gives the live view. See [how it works](how-it-works.md#design-mode) for what the readers do and do not understand.
 
+## Asking questions and exporting diagrams
+
+After a build, Claude Code sessions in the project folder can use the plugin's `hopscope` MCP tools: ask "what breaks if I change app/identity.py?" or "what does POST /orders touch?" and the agent answers from `.hopscope/` without re-reading the code. (In Codex, add the server once: see [Hopscope in Codex](codex.md#mcp-server).) The server looks for `.hopscope/` in the project folder; if you built with another `--workdir`, ask the agent to use the command line below instead.
+
+From the command line:
+
+```bash
+$PY skills/hopscope/scripts/hopscope.py impact app/identity.py
+$PY skills/hopscope/scripts/hopscope.py query "POST /orders"
+$PY skills/hopscope/scripts/hopscope.py export --format mermaid --out architecture.mmd
+$PY skills/hopscope/scripts/hopscope.py export --format mermaid --route "POST /orders" --out orders.mmd
+$PY skills/hopscope/scripts/hopscope.py export --format drawio --out architecture.drawio
+```
+
 ## Keeping it fresh
 
 The console is a snapshot. Re-run `hopscope.py all` (with `--overrides hopscope.json`) whenever you want new numbers, or ask the agent to schedule it.

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0 — 2026-11-12
+
+- **MCP server.** `hopscope_mcp.py` gives agents seven read-only tools over a build: `find_routes`, `trace`, `who_calls`, `what_runs`, `impact`, `resources` and `health`. Standard-library Python over stdio (MCP 2025-06-18, older 2025-03-26 and 2024-11-05 clients accepted). The Claude Code plugin registers it for `<project>/.hopscope`; Codex users add it with `codex mcp add` (see docs/codex.md).
+- **Change impact.** `hopscope.py impact <file>`: the files that depend on it, the routes whose handler or code path reaches it (nearest first), the services they run on, and the queues and workers downstream.
+- **Route answers on the command line.** `hopscope.py query "POST /orders"` prints the load balancer rule, compute, code path with conditions, queues, workers and database.
+- **Exports.** `hopscope.py export --format mermaid|drawio [--route …] --out FILE`: a Mermaid architecture flowchart, a Mermaid sequence diagram of one route, or a draw.io file of the architecture with AWS icons. Labels are escaped.
+
 ## 0.3.0 — 2026-11-12
 
 - **Design mode.** `hopscope.py design --repo <path>` builds the console from your code and your docker compose, Terraform and CloudFormation/SAM files, with no AWS account or credentials. The Architecture, Components and Trace views work; there are no live numbers and the Cost tab is hidden.

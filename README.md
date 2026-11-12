@@ -12,7 +12,7 @@ Claude or Codex reads your AWS account and your code, links the two, and gives y
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757?style=flat-square)](https://code.claude.com/docs/en/overview)
 [![Codex plugin](https://img.shields.io/badge/Codex-plugin-111?style=flat-square)](docs/codex.md)
 [![Tests](https://img.shields.io/github/actions/workflow/status/supreeth-ravi/hopscope/test.yml?branch=main&style=flat-square&label=tests)](https://github.com/supreeth-ravi/hopscope/actions/workflows/test.yml)
-[![Version](https://img.shields.io/badge/version-0.3.0-111?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.4.0-111?style=flat-square)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111?style=flat-square)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-%E2%89%A53.10-111?style=flat-square)](https://www.python.org)
 [![AWS read-only](https://img.shields.io/badge/AWS-read--only-111?style=flat-square)](skills/hopscope/references/iam-policy.json)
@@ -197,6 +197,22 @@ Prefer the command line? See [Getting started](docs/getting-started.md#without-a
 | "Fix the critical items from Hopscope's action queue" | "Show me POST /orders" |
 | "Which services in Hopscope can we turn off?" | Press ▶ and listen to the request |
 | "Map this repo from its Terraform, no AWS" | "Show me POST /orders" (design mode) |
+| "What breaks if I change app/identity.py?" (MCP `impact`) | |
+| "What does POST /cart/checkout touch?" (MCP `trace`) | |
+| "Draw our architecture as Mermaid for the README" (`export`) | |
+
+## For agents
+
+Once a build exists, Claude Code gets Hopscope as an **MCP server** (registered by the plugin, read-only, standard-library Python). In a fresh session an agent can ask `impact("app/identity.py")` for what a change can break (dependent files, the routes whose code path reaches the file, the services they run on, the queues and workers downstream) or `trace("POST /orders")` for everything one API touches, without re-reading the code or the account. Other tools: `find_routes`, `who_calls`, `what_runs`, `resources`, `health`. Codex users add the server with one `codex mcp add` line ([Hopscope in Codex](docs/codex.md#mcp-server)).
+
+The same answers on the command line, and diagrams to paste into docs:
+
+```bash
+hopscope.py impact app/identity.py
+hopscope.py query "POST /orders"
+hopscope.py export --format mermaid --out architecture.mmd           # or --route "POST /orders" for a sequence diagram
+hopscope.py export --format drawio  --out architecture.drawio         # AWS icons, opens in draw.io
+```
 
 ## How it works
 

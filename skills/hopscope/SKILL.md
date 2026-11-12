@@ -1,6 +1,6 @@
 ---
 name: hopscope
-description: Hopscope builds a live ops console from someone's own code and AWS account — a health dashboard (traffic, errors, latency, saturation, an action queue with fixes), an architecture diagram of what is actually deployed, an inventory of every AWS component with usage, a cost and savings view, and a narrated trace that plays any API request hop by hop from DNS and the load balancer rule through the container and code path to databases, queues and background workers. Use this whenever the user wants to see or run ops for their system, map their code to their AWS servers, understand where a request goes ("show me the /login flow on infra"), find what is broken or wasting money in AWS, get an architecture diagram of their deployed stack, or set up a dashboard over ECS/EC2/RDS/SQS/Lambda — even if they don't say "Hopscope".
+description: Hopscope builds a live ops console from someone's own code and AWS account — a health dashboard (traffic, errors, latency, saturation, an action queue with fixes), an architecture diagram of what is actually deployed, an inventory of every AWS component with usage, a cost and savings view, and a narrated trace that plays any API request hop by hop from DNS and the load balancer rule through the container and code path to databases, queues and background workers. Use this whenever the user wants to see or run ops for their system, map their code to their AWS servers, understand where a request goes ("show me the /login flow on infra"), find what is broken or wasting money in AWS, get an architecture diagram of their deployed stack, set up a dashboard over ECS/EC2/RDS/SQS/Lambda, ask what a code change would break or what an API touches, or want a Mermaid or draw.io diagram of their stack — even if they don't say "Hopscope".
 ---
 
 # Hopscope
@@ -111,6 +111,31 @@ largest savings. Point them at the Trace tab with one of the generated example q
 The data is a snapshot. Offer to re-run on a schedule (the `schedule` skill, or a cron job running
 `hopscope.py all` and republishing to the same artifact URL).
 
+## Answering questions once it is built
+
+When `.hopscope/` already holds a build, answer questions about the system from it instead of
+re-reading the code or the account.
+
+- **MCP tools (Claude Code).** The plugin registers a `hopscope` MCP server that reads
+  `<project>/.hopscope/data` (or `site/`). Use `impact` before changing a file ("what breaks if I change
+  `app/identity.py`?": dependent files, the routes whose handler or code path reaches it, the services they
+  run on, and the queues and workers downstream), `trace` for "what does POST /orders touch?",
+  `find_routes` to get the exact route name first, `who_calls` for callers of a file or function,
+  `what_runs` for the compute, queues and database behind a code folder, `resources` for the inventory,
+  and `health` for one resource's status and the actions that mention it. In Codex the server is added
+  by hand (see `docs/codex.md`). If a tool says there is no data, build first (`all` or `design`).
+- **Command line.** The same answers as text:
+  `$PY <skill-dir>/scripts/hopscope.py impact <file> --workdir <project>/.hopscope` and
+  `$PY <skill-dir>/scripts/hopscope.py query "POST /orders" --workdir <project>/.hopscope`.
+- **Diagrams for a README or a design doc.**
+  `hopscope.py export --format mermaid --out arch.mmd` (architecture flowchart),
+  `--format mermaid --route "POST /orders" --out orders.mmd` (sequence diagram of one route), or
+  `--format drawio --out arch.drawio` (architecture with AWS icons, opens in draw.io). Exports describe
+  the real system, so treat them like the console: don't publish one from a real account.
+
+The answers are as good as the build: call sequences are traced for Python handlers only, and a route's
+compute comes from the reviewed links. In design mode there are no live numbers.
+
 ## Making it presentable for others
 
 For a public demo or post, never publish a real account's data, even with names replaced: the services,
@@ -130,7 +155,10 @@ routes, code paths and numbers still describe the real system. Build the demo fr
 
 ## Files
 
-- `scripts/hopscope.py` — entry point (`all`, `collect`, `build`, `review`, `serve`)
+- `scripts/hopscope.py` — entry point (`all`, `collect`, `design`, `build`, `review`, `serve`, `impact`, `query`, `export`)
+- `scripts/hopscope_query.py` — answers over a build: routes, traces, callers, change impact, resources, health
+- `scripts/hopscope_mcp.py` — MCP server (stdio) exposing those answers as tools
+- `scripts/hopscope_export.py` — Mermaid and draw.io exports
 - `scripts/local_agent.py` — runs the console's Ask on the Claude Code or Codex CLI when served locally
 - `scripts/aws_inventory.py`, `scripts/aws_timeseries.py` — read-only AWS collectors
 - `scripts/code_scan.py`, `scripts/call_flow.py` — code map and per-API call sequences

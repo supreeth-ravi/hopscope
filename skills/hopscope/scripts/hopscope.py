@@ -6,6 +6,9 @@
     hopscope.py build   [--workdir …]       # write the site from collected data
     hopscope.py review  [--workdir …]       # show links that need a human to confirm
     hopscope.py serve   [--workdir …] [--port 8765] [--engine claude|codex] [--model m]
+    hopscope.py impact  <file>   [--workdir …]  # what a change to this file can break
+    hopscope.py query   "<METHOD /path>" [--workdir …]  # what one route touches, step by step
+    hopscope.py export  --format mermaid|drawio [--route "<METHOD /path>"] --out FILE [--workdir …]
 
 Data goes to <workdir>/data, the site to <workdir>/site (index.html + JSON files).
 """
@@ -22,6 +25,9 @@ import threading
 from functools import partial
 from pathlib import Path
 
+import hopscope_export
+import hopscope_query
+import hopscope_text
 import local_agent
 
 HERE = Path(__file__).resolve().parent
@@ -204,9 +210,41 @@ def serve(site: Path, port: int, engine: local_agent.Engine | None) -> None:
     http.server.ThreadingHTTPServer(("127.0.0.1", port), handler).serve_forever()
 
 
+def ask(cmd: str, target: str | None, work: Path) -> None:
+    """`impact` and `query`: answer from the built data, print readable text."""
+    if not target:
+        usage = "<file>" if cmd == "impact" else '"POST /path"'
+        raise SystemExit(f"{cmd} needs a target: hopscope.py {cmd} {usage}")
+    try:
+        data = hopscope_query.load(hopscope_text.data_dir(work))
+    except hopscope_query.NoData as e:
+        raise SystemExit(str(e)) from None
+    r = hopscope_query.impact(data, target) if cmd == "impact" else hopscope_query.trace(data, target)
+    print(hopscope_text.impact_text(r) if cmd == "impact" else hopscope_text.trace_text(r))
+    if "error" in r:
+        raise SystemExit(1)
+
+
+def export(fmt: str, route: str | None, out: str | None, work: Path) -> None:
+    """Mermaid architecture or route sequence, or draw.io architecture, written to --out."""
+    if not out:
+        raise SystemExit("export needs --out FILE")
+    if fmt == "drawio" and route:
+        raise SystemExit("draw.io export covers the architecture only; use --format mermaid for a route")
+    try:
+        data = hopscope_query.load(hopscope_text.data_dir(work))
+        text = (hopscope_export.drawio_architecture(data) if fmt == "drawio"
+                else hopscope_export.mermaid_trace(data, route) if route else hopscope_export.mermaid_architecture(data))
+    except (hopscope_query.NoData, ValueError) as e:
+        raise SystemExit(str(e)) from None
+    Path(out).expanduser().write_text(text, encoding="utf-8")
+    print(f"wrote {out}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("cmd", choices=["all", "collect", "design", "build", "review", "serve"])
+    ap.add_argument("cmd", choices=["all", "collect", "design", "build", "review", "serve", "impact", "query", "export"])
+    ap.add_argument("target", nargs="?", help="impact: a file path; query: a route such as \"POST /orders\"")
     ap.add_argument("--region")
     ap.add_argument("--profile")
     ap.add_argument("--repo", action="append", default=[])
@@ -217,6 +255,9 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--engine", choices=local_agent.ENGINES, help="CLI that answers Ask in `serve` (default: the one that launched Hopscope, else whichever is installed)")
     ap.add_argument("--model", help="model for the Ask CLI")
+    ap.add_argument("--format", choices=["mermaid", "drawio"], default="mermaid", help="export format")
+    ap.add_argument("--route", help="export: a route to draw as a sequence diagram (mermaid only)")
+    ap.add_argument("--out", help="export: file to write")
     a = ap.parse_args()
     work = Path(a.workdir).expanduser().resolve()
     data, site = work / "data", work / "site"
@@ -234,6 +275,10 @@ def main() -> None:
         build(data, site)
     if a.cmd == "review" or a.cmd == "all":
         review(data)
+    if a.cmd in ("impact", "query"):
+        ask(a.cmd, a.target, work)
+    if a.cmd == "export":
+        export(a.format, a.route, a.out, work)
     if a.cmd == "serve":
         serve(site, a.port, local_agent.pick_engine(a.engine, a.model))
 

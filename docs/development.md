@@ -7,7 +7,8 @@
 skills/hopscope/
   SKILL.md               how Claude Code or Codex runs Hopscope
   scripts/               collectors, code map, call flows, linker, rules, CLI (hopscope.py),
-                         local Ask on Claude Code or Codex (local_agent.py)
+                         local Ask on Claude Code or Codex (local_agent.py), answers over a build
+                         (hopscope_query.py), MCP server (hopscope_mcp.py), exports (hopscope_export.py)
   assets/console.html    the console page
   references/            IAM policy, hopscope.json reference
 docs/                    documentation, images, and the live demo (docs/demo)
