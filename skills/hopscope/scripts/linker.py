@@ -18,6 +18,8 @@ from collections import Counter
 from pathlib import Path
 
 from iac_common import mask_numbers
+from langs.common import read_contained
+from linker_streams import stream_links
 
 STOP = {"prod", "production", "staging", "stage", "stg", "dev", "test", "qa", "svc", "service", "services", "ecs", "app", "the", "main", "default",
         "src", "server", "fargate", "task", "container", "img", "image", "latest", "v1", "v2"}
@@ -40,14 +42,15 @@ def tokens(text: str) -> set[str]:
 
 
 def deploy_files(base: Path) -> list[tuple[str, str]]:
+    """Deployment files under base: regular files inside it, never through a symlink, under 300 KB."""
     out = []
+    root = base.resolve()
     for dirpath, dirnames, filenames in os.walk(base):
         dirnames[:] = [d for d in dirnames if d not in SKIP]
         for f in filenames:
-            p = Path(dirpath) / f
-            rel = str(p.relative_to(base))
-            if DEPLOY_FILE.search(rel) and p.stat().st_size < 300_000:
-                out.append((rel, p.read_text(errors="ignore")))
+            rel = str((Path(dirpath) / f).relative_to(base))
+            if DEPLOY_FILE.search(rel) and (text := read_contained(root, rel, 300_000)) is not None:
+                out.append((rel, text))
     return out
 
 
@@ -188,13 +191,13 @@ def queue_links(code: dict, inv: dict, services: list[str], placement: dict[str,
     uses: dict[str, set[str]] = {}
     consumers: dict[str, set[str]] = {}
     stems = {n: re.sub(r"\.fifo$", "", n) for n in names}
+    root = base.resolve()
     for f in code["files"]:
         s = service_of(f["p"], services)
         if not s:
             continue
-        try:
-            text = (base / f["p"]).read_text(errors="ignore")
-        except OSError:
+        text = read_contained(root, f["p"])
+        if text is None:
             continue
         for n in names:
             if (mentions_queue(text, stems[n]) if design else stems[n] in text):
@@ -307,6 +310,7 @@ def main() -> None:
     ec2_by_id = {e["id"]: e["n"] for e in inv["ec2"]}
     tg_host = {r["tg"]: ec2_by_id[r["instances"][0]] for lb in inv["lb"] for r in lb["routes"] if r["instances"] and r["instances"][0] in ec2_by_id}
     db_for = db_links(inv, placement)
+    streams, consumers = stream_links(code, inv, services, placement, base)
     code_to_compute: dict[str, list[str]] = {}
     for key, p in sorted(placement.items(), key=lambda kv: -kv[1]["confidence"]):
         code_to_compute.setdefault(p["code"], []).append(key.split("/", 1)[1])
@@ -316,7 +320,7 @@ def main() -> None:
     why = {k: v for k, v in unscanned_builds(code, inv, services).items() if k in unplaced}
     third_party = sorted(f'{e["cluster"]}/{e["n"]}' for e in inv["ecs"] if e.get("ownImage") is False)
     out = {"placement": placement, "codeToCompute": code_to_compute, "labels": labels, "queues": queues, "queueWorkers": workers,
-           "tgHost": tg_host, "dbFor": db_for, "review": review, "unplaced": unplaced, "unplacedWhy": why, "thirdParty": third_party}
+           "tgHost": tg_host, "dbFor": db_for, "streams": streams, "consumers": consumers, "review": review, "unplaced": unplaced, "unplacedWhy": why, "thirdParty": third_party}
     json.dump(out, open(a.out, "w"), indent=1)
     print(f"links: {len(placement)} ECS services placed ({len(review)} to review, {len(unplaced)} unplaced), {sum(map(len, queues.values()))} queue links, "
           f"{len(workers)} queue workers, {len(tg_host)} EC2 targets -> {a.out}")

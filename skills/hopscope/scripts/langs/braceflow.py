@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 
 from langs import flowkinds as fk
-from langs.common import line_of, match_close
+from langs.common import line_of, match_close, read_contained
 from langs.flowparse import KEYWORDS, Klass, Method, Parsed, cond_at, generic_args, locals_in, params_of, parse, receiver_chain, regions, simple_type
 
 MAX_DEPTH, MAX_STEPS = 3, 28
@@ -28,10 +28,10 @@ class Service:
         self.parsed: dict[str, Parsed] = {}
         self.classes: dict[str, list[Klass]] = {}
         self.db = db
+        root = base.resolve()
         for f in files:
-            try:
-                text = (base / f).read_text(errors="ignore")
-            except OSError:
+            text = read_contained(root, f)
+            if text is None:
                 continue
             p = parse(text, f)
             self.parsed[f] = p
@@ -191,7 +191,7 @@ class Tracer:
         svc = fk.aws_service(t)
         if svc:
             api = "SendMessage" if svc == "SQS" and name in ("send", "sendAsync", "convertAndSend") else fk.api_name(name)
-            return "aws", f"{svc}: {api}"
+            return fk.STEP_KIND.get(svc, "aws"), f"{svc}: {api}"
         if fk.KAFKA_TYPE.match(t) and re.match(r"(send|produce|publish)", name, re.I):
             topic = fk.strings_in(args)
             return "kafka", f"Kafka: send to {topic[0]}" if topic else "Kafka: send"

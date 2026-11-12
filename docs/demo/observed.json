@@ -1,0 +1,71 @@
+{
+ "generatedAt": "2026-11-02T06:30:00Z",
+ "captures": 1,
+ "requests": 13,
+ "routes": {
+  "0": {
+   "route": "GET /",
+   "count": 1,
+   "status": {
+    "2xx": 1
+   },
+   "avgMs": 85.0,
+   "lastSeen": "2026-11-02T05:00:00Z"
+  },
+  "4": {
+   "route": "GET /catalog/beans",
+   "count": 6,
+   "status": {
+    "2xx": 6
+   },
+   "avgMs": 122.5,
+   "lastSeen": "2026-11-02T05:05:00Z"
+  },
+  "5": {
+   "route": "POST /cart/checkout",
+   "count": 2,
+   "status": {
+    "2xx": 1,
+    "5xx": 1
+   },
+   "avgMs": 1810.0,
+   "lastSeen": "2026-11-02T05:14:00Z"
+  },
+  "8": {
+   "route": "GET /orders/{order_id}",
+   "count": 1,
+   "status": {
+    "2xx": 1
+   },
+   "avgMs": 95.0,
+   "lastSeen": "2026-11-02T05:15:00Z"
+  },
+  "10": {
+   "route": "POST /account/sign-in",
+   "count": 2,
+   "status": {
+    "2xx": 1,
+    "4xx": 1
+   },
+   "avgMs": 210.0,
+   "lastSeen": "2026-11-02T05:08:00Z"
+  }
+ },
+ "unmatched": [
+  {
+   "method": "GET",
+   "path": "/api/gift-cards/balance",
+   "count": 1,
+   "status": {
+    "4xx": 1
+   },
+   "lastSeen": "2026-11-02T05:16:00Z"
+  }
+ ],
+ "unmatchedMore": 0,
+ "skipped": {
+  "static": 1,
+  "otherHosts": 0,
+  "preflight": 0
+ }
+}

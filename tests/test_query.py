@@ -23,12 +23,12 @@ def test_load_needs_code_and_model(tmp_path: Path) -> None:
     assert "hopscope.py design" in str(e.value)
 
 
-@pytest.mark.parametrize("name", ["hopscope_query.py", "hopscope_callers.py"])
+@pytest.mark.parametrize("name", ["hopscope_query.py", "hopscope_callers.py", "hopscope_streams.py", "hopscope_observed.py"])
 def test_stdlib_only_and_no_side_effects(name: str) -> None:
     tree = ast.parse((Path(q.__file__).parent / name).read_text())
     mods = {n.names[0].name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import)}
     mods |= {n.module.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module and n.level == 0}
-    assert mods <= set(sys.stdlib_module_names) | {"__future__", "hopscope_callers"}
+    assert mods <= set(sys.stdlib_module_names) | {"__future__", "hopscope_callers", "hopscope_streams", "hopscope_observed"}
     assert not mods & {"subprocess", "socket", "urllib", "http", "os", "shutil"}
 
 

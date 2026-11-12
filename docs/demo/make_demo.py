@@ -20,7 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "skills" / "hopscope" / "scripts"
 OUT = Path(__file__).resolve().parent
-SITE_FILES = ("code.json", "aws.json", "flows.json", "ts.json", "model.json", "changes.json", "drift.json")
+SITE_FILES = ("code.json", "aws.json", "flows.json", "ts.json", "model.json", "changes.json", "drift.json", "observed.json")
 COLLECTED = datetime(2026, 11, 2, 6, 30, tzinfo=timezone.utc)
 RNG = random.Random(7)
 SQS = "https://sqs.us-east-1.amazonaws.com/************/"
@@ -526,6 +526,8 @@ def inventory(hour: float = 72) -> dict:
         {"n": "image-resize", "mem": 1024, "inv": 3820, "err": 0.0, "dur": 412.0, "fam": "image-resize"},
         {"n": "stock-sync", "mem": 256, "inv": 288, "err": 3.0, "dur": 950.0, "fam": "stock-sync"},
         {"n": "wholesale-quote", "mem": 512, "inv": 41, "err": 0.0, "dur": 230.0, "fam": "wholesale-quote"},
+        {"n": "clickstream-rollup", "mem": 512, "inv": 1440, "err": 0.0, "dur": 180.0, "fam": "clickstream-rollup"},
+        {"n": "renewal-charge", "mem": 256, "inv": 96, "err": 4.0, "dur": 640.0, "fam": "renewal-charge"},
     ] + [{"n": f"promo-landing-{i:03d}", "mem": 128, "inv": 0, "err": 0.0, "dur": 0.0, "fam": "promo-landing-*"} for i in range(1, 61)]
     rds_host = "xxxxxxxx.us-east-1.rds.amazonaws.com"
     rds = [
@@ -562,7 +564,27 @@ def inventory(hour: float = 72) -> dict:
         "cognito": [{"n": "Kestrel Members"}],
         "s3": {"count": 9}, "nat": 1, "eips": {"total": 3, "unattached": 1},
         "ecr": 7, "secrets": 11, "dynamodb": ["tf-lock"], "ses": ["kestrel.example"], "eventbridge": ["roast-planner-nightly"],
+        # workflows and streams (0.7.0)
+        "sfn": [{"n": "subscription-renewal", "type": "STANDARD", "targets": [{"kind": "lambda", "n": "renewal-charge"}, {"kind": "sqs", "n": "kestrel-notify.fifo"}],
+                 "failed": 4 if hour >= 60 else 0, "started": 96}],
+        "kinesis": [{"n": "kestrel-clickstream", "status": "ACTIVE", "mode": "ON_DEMAND", "shards": 2, "incoming": 184200, "iteratorAgeMs": 95000}],
+        "msk": [], "eks": [],
+        "ebTargets": [{"rule": "roast-planner-nightly", "kind": "sfn", "n": "subscription-renewal"}],
+        "esm": [{"fn": "clickstream-rollup", "kind": "kinesis", "source": "kestrel-clickstream", "topics": [], "state": "Enabled", "last": "OK"}],
     }
+
+
+def capture() -> dict:
+    """An invented browser capture (HAR) of a shopper's visit: the console marks the routes it saw."""
+    def entry(method: str, path: str, status: int, ms: float, minute: int, rtype: str = "fetch") -> dict:
+        return {"startedDateTime": (COLLECTED - timedelta(minutes=90 - minute)).isoformat(), "time": ms, "_resourceType": rtype,
+                "request": {"method": method, "url": f"https://shop.kestrel.example{path}", "headers": []}, "response": {"status": status}}
+    entries = [entry("GET", "/", 200, 85, 0, "document"), entry("GET", "/static/app.js", 200, 20, 0, "script")]
+    entries += [entry("GET", "/api/catalog/beans", 200, 120 + i, i) for i in range(6)]
+    entries += [entry("POST", "/api/account/sign-in", 200, 240, 8), entry("POST", "/api/account/sign-in", 401, 180, 7)]
+    entries += [entry("POST", "/api/cart/checkout", 200, 610, 12), entry("POST", "/api/cart/checkout", 502, 3010, 14)]
+    entries += [entry("GET", "/api/orders/4182", 200, 95, 15), entry("GET", "/api/gift-cards/balance", 404, 40, 16)]
+    return {"log": {"version": "1.2", "pages": [{"id": "p1", "title": "https://shop.kestrel.example/"}], "entries": entries}}
 
 
 # ---------------------------------------------------------------- fake hourly metrics
@@ -635,6 +657,11 @@ def main() -> None:
             run("drift.py", "--data", str(data))
             run("rules.py", "--data", str(data), "--overrides", str(overrides))
             run("history.py", "--data", str(data), "--workdir", str(work))
+        (Path(tmp) / "visit.har").write_text(json.dumps(capture()), encoding="utf-8")
+        run("observe_har.py", "--code", str(data / "code.json"), "--har", str(Path(tmp) / "visit.har"), "--out", str(data / "observed.json"))
+        observed = json.loads((data / "observed.json").read_text(encoding="utf-8"))
+        observed["generatedAt"] = COLLECTED.strftime("%Y-%m-%dT%H:%M:%SZ")  # the same file on every rebuild
+        (data / "observed.json").write_text(json.dumps(observed, indent=1), encoding="utf-8")
         for f in SITE_FILES:
             text = (data / f).read_text(encoding="utf-8").replace(str(repo), "/home/demo/kestrel").replace(tmp, "/home/demo")
             (OUT / f).write_text(text, encoding="utf-8")

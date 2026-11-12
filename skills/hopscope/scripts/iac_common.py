@@ -122,19 +122,25 @@ def mask_numbers(obj: Any) -> Any:
     return obj
 
 
+def scalar(v: Any) -> str:
+    """The text of a plain value; "" for a list or mapping. Files are data: str() of an aliased structure from a YAML
+    alias bomb would expand it into gigabytes."""
+    return str(v) if isinstance(v, (str, int, float, bool)) else ""
+
+
 def env_of(name: str) -> str:
     return "staging" if STAGING.search(name) else "prod"
 
 
 def clean_name(raw: Any, fallback: str) -> str:
     """A readable resource name: interpolations removed, leftover separators trimmed."""
-    text = re.sub(r"\$\{[^}]*\}", "", str(raw or "")).strip("-_. ")
+    text = re.sub(r"\$\{[^}]*\}", "", scalar(raw or "")).strip("-_. ")
     return text or fallback
 
 
 def image_engine(image: str) -> str:
     """The repository name of an image: bitnami/postgresql:16 -> postgresql."""
-    return str(image or "").split("@")[0].rsplit("/", 1)[-1].split(":")[0]
+    return scalar(image or "").split("@")[0].rsplit("/", 1)[-1].split(":")[0]
 
 
 def infra_kind(image: str) -> str | None:
@@ -167,11 +173,11 @@ def ecs_row(cluster: str, name: str, desired: int = 1, images: list[str] | None 
             known_hosts: Mapping[str, Collection[int]] | Collection[str] | None = None, desired_set: bool = False, family: str = "", name_var: bool = False) -> dict:
     """desired_set says the file states a literal desired count (not a variable or a default); family is the task-definition family;
     name_var says part of the name came from a variable (${var.env}-api), so only its tail is known."""
-    full = [i for i in (images or []) if i]
+    full = [i for i in (scalar(x) for x in images or []) if i]
     own = build is not None or not full or any(OWN_REGISTRY.search(i) for i in full)
     imgs = [n for i in full if (n := image_engine(i))]  # the repository name only: a registry host can carry the account number
     return {"cluster": cluster, "n": name, "running": desired, "desired": desired, "size": size, "images": imgs, "ownImage": own,
-            "containers": [name], "refs": [{"k": k, "v": sv} for k, v in sorted((env_vars or {}).items()) if (sv := safe_ref(k, str(v), known_hosts)) is not None], "tgs": list(tgs or []),
+            "containers": [name], "refs": [{"k": k, "v": sv} for k, v in sorted((env_vars or {}).items()) if isinstance(k, str) and (sv := safe_ref(k, scalar(v), known_hosts)) is not None], "tgs": list(tgs or []),
             "env": env_of(f"{cluster}/{name}"), "cpu": 0, "mem": 0, "memMax": 0, "cpuMax": 0,
             "build": build, "buildFrom": build_from, "source": source, "desiredSet": desired_set, "taskFamily": family, "nameVar": name_var}
 
@@ -196,7 +202,7 @@ LABEL = re.compile(r"[A-Za-z0-9._ -]{1,40}")
 
 def label(v: Any) -> str:
     """A short descriptive word (engine, class) read from a file: letters, digits and . _ - only, else empty."""
-    t = str(v or "").strip()
+    t = scalar(v or "").strip()
     return t if LABEL.fullmatch(t) else ""
 
 

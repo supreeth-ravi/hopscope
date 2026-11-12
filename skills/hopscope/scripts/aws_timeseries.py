@@ -14,12 +14,17 @@ from datetime import date, timedelta
 from awsutil import env_of, metric_hourly, session
 
 
+def has_metrics(x: dict) -> bool:
+    return x.get("source") != "kubernetes"  # Kubernetes rows have no CloudWatch metrics
+
+
 def pick(inv: dict) -> dict:
     """Choose the entities worth charting; any of them may be None in a small account."""
-    albs = [lb for lb in inv["lb"] if lb["type"] == "application"]
+    albs = [lb for lb in inv["lb"] if lb["type"] == "application" and has_metrics(lb)]
     public = sorted([lb for lb in albs if lb["scheme"] == "internet-facing"], key=lambda lb: -lb["req"])
-    dbs = sorted([d for d in inv["rds"] if d["env"] == "prod"] or inv["rds"], key=lambda d: (-d["conns"], -d["cpu"]))
-    hot = sorted([x for x in inv["ecs"] if x["env"] == "prod" and x["running"]], key=lambda x: -x["memMax"])
+    rds = [d for d in inv["rds"] if has_metrics(d)]
+    dbs = sorted([d for d in rds if d["env"] == "prod"] or rds, key=lambda d: (-d["conns"], -d["cpu"]))
+    hot = sorted([x for x in inv["ecs"] if x["env"] == "prod" and x["running"] and has_metrics(x)], key=lambda x: -x["memMax"])
     live = [q for q in inv["sqs"] if not q["dlq"] and q["sent"] > 0]
     queues = sorted([q for q in live if env_of(q["n"]) == "prod"] or live, key=lambda q: -q["sent"])
     return {"lb": public[0]["n"] if public else (albs[0]["n"] if albs else None), "db": dbs[0] if dbs else None,

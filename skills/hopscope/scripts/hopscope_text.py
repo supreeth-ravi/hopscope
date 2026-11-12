@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import hopscope_query as q
+from hopscope_streams import text as streams_text
 
 
 def data_dir(work: Path) -> Path:
@@ -56,6 +57,8 @@ def trace_text(t: dict) -> str:
     if t.get("calledFrom"):
         more = len(t["calledFrom"]) - 3
         lines.append("  called from: " + ", ".join(t["calledFrom"][:3]) + (f" and {more} more" if more > 0 else ""))
+    if t.get("observed"):
+        lines.append(f"  {t['observed']['note']}")
     for e in t["entry"]:
         lines.append(f"  entry: {e['lb']} when {e['when']} -> {e['target']}")
     lines.append(f"  runs on: {_computes(t['compute'])}")
@@ -69,5 +72,7 @@ def trace_text(t: dict) -> str:
     if t["database"]:
         lines += ["", f"  database: {t['database']}"]
     for x in t["queues"]:
-        lines.append(f"  queue: {x['queue']} -> {x['worker'] or 'no worker found'}{' (' + x['job'] + ')' if x.get('job') else ''}{_basis(x)}")
+        lambdas = f" (Lambda: {', '.join(x['consumers'])})" if x.get("consumers") else ""
+        lines.append(f"  queue: {x['queue']} -> {x['worker'] or ('Lambda' if lambdas else 'no worker found')}{' (' + x['job'] + ')' if x.get('job') else ''}{lambdas}{_basis(x)}")
+    lines += streams_text(t.get("streams") or [])
     return "\n".join(lines)

@@ -10,7 +10,7 @@ any other version gets 2025-06-18. JSON-RPC batches (arrays) are rejected, as 20
 
 Tools map one to one onto hopscope_query: find_routes, trace, who_calls, what_runs, impact, resources,
 health; and onto hopscope_changes: changes (what changed between builds, recent ECS deploys) and drift (where
-code, infrastructure files and AWS disagree). Bad arguments and missing data come back as tool results with isError: true; unknown tools are
+code, infrastructure files and AWS disagree); and onto hopscope_observed: observed (routes seen in browser captures). Bad arguments and missing data come back as tool results with isError: true; unknown tools are
 JSON-RPC error -32602 and unknown methods -32601.
 
 The workdir defaults to `.hopscope`; a relative path resolves against $CLAUDE_PROJECT_DIR when Claude Code
@@ -28,11 +28,12 @@ from pathlib import Path
 from typing import Any, BinaryIO, Callable, Iterator
 
 import hopscope_changes
+import hopscope_observed
 import hopscope_query as q
 
 LATEST = "2025-06-18"
 SUPPORTED = (LATEST, "2025-03-26", "2024-11-05")
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 MAX_LINE = 1_000_000  # bytes; a request longer than this is refused unread
 
 INSTRUCTIONS = ("Hopscope maps this project's code onto its AWS setup (or its compose/Terraform/CloudFormation files). "
@@ -98,6 +99,11 @@ TOOLS: list[dict[str, Any]] = [
                     "Findings resting on a code-to-compute link carry linkConfidence; unconfirmed: true means that link is unconfirmed.",
      "inputSchema": {"type": "object", "properties": {"kind": _s("only this finding kind, e.g. aws_not_in_files, queue_unreferenced")},
                      "additionalProperties": False}},
+    {"name": "observed", "title": "Seen in browser captures",
+     "description": "What browser captures (HAR files imported with hopscope.py observe --har) show: the routes the browser called with request counts "
+                    "and status classes (2xx/4xx/5xx), and captured requests that no scanned route serves. Only methods, path patterns, status and "
+                    "timing are kept; without a capture it says how to make one.",
+     "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False}},
 ]
 for _t in TOOLS:
     _t["annotations"] = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
@@ -112,6 +118,7 @@ RUN: dict[str, Callable[[dict, dict], dict]] = {
     "health": lambda d, a: q.health(d, a["name"]),
     "changes": lambda d, a: hopscope_changes.changes(d, a.get("since"), d.get("work")),
     "drift": lambda d, a: hopscope_changes.drift(d, a.get("kind")),
+    "observed": lambda d, a: hopscope_observed.summary(d),
 }
 BY_NAME = {t["name"]: t for t in TOOLS}
 

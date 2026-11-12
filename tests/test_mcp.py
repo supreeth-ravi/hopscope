@@ -41,7 +41,7 @@ def test_initialize_and_list(tmp_path: Path) -> None:
     init = out[0]["result"]
     assert init["protocolVersion"] == "2025-06-18" and "tools" in init["capabilities"] and init["serverInfo"]["name"] == "hopscope"
     names = {t["name"] for t in out[1]["result"]["tools"]}
-    assert names == {"find_routes", "trace", "who_calls", "what_runs", "impact", "resources", "health", "changes", "drift"}
+    assert names == {"find_routes", "trace", "who_calls", "what_runs", "impact", "resources", "health", "changes", "drift", "observed"}
     for t in out[1]["result"]["tools"]:
         assert t["inputSchema"]["type"] == "object" and t["description"] and t["annotations"]["readOnlyHint"] is True
     assert out[2]["result"] == {}

@@ -4,6 +4,24 @@ from __future__ import annotations
 
 import re
 from functools import lru_cache
+from pathlib import Path
+
+MAX_FILE_BYTES = 400_000  # larger files are generated or vendored; the scanner skips them too
+
+
+def read_contained(base: Path, rel: str, limit: int = MAX_FILE_BYTES) -> str | None:
+    """The text of base/rel, or None unless it is a regular file of at most limit bytes that is not a symlink and
+    resolves inside base. code.json and similar files are data: a path in them may say ../ or name a symlink.
+    base must already be resolved."""
+    if not rel:
+        return None
+    p = base / rel
+    try:
+        if p.is_symlink() or not p.resolve().is_relative_to(base) or not p.is_file() or p.stat().st_size > limit:
+            return None
+        return p.read_text(errors="ignore")
+    except (OSError, RuntimeError, ValueError):
+        return None
 
 # External systems, detected from imports and SDK calls in any language. Keys are what the console draws.
 EXTERNAL = {
@@ -19,6 +37,10 @@ EXTERNAL = {
     "search": r"opensearch|elasticsearch",
     "chatapps": r"slack_sdk|slack_bolt|@slack/|telegram",
     "tracing": r"opentelemetry|langfuse|@sentry|sentry_sdk|datadog|ddtrace",
+    "sfn": r"['\"](stepfunctions|sfn)['\"]|client-sfn|\bSFNClient\b|StartExecutionCommand|aws-sdk-go(-v2)?/service/sfn|\.start_execution\(",
+    "kinesis": r"['\"]kinesis['\"]|client-kinesis|\bKinesisClient\b|PutRecords?Command|aws-sdk-go(-v2)?/service/kinesis",
+    "kafka": r"^\s*(from|import)\s+(kafka|confluent_kafka|aiokafka)\b|from\s+['\"](kafkajs|node-rdkafka)['\"]|require\(['\"]kafkajs['\"]\)|"
+             r"github\.com/(segmentio/kafka-go|IBM/sarama|Shopify/sarama|confluentinc/confluent-kafka-go)",
 }
 EXT_RX = {k: re.compile(v, re.M | re.I) for k, v in EXTERNAL.items()}
 

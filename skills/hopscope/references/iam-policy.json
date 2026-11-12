@@ -17,7 +17,10 @@
         "elasticache:DescribeCacheClusters", "es:ListDomainNames", "es:DescribeDomains",
         "apigateway:GET", "cloudfront:ListDistributions", "cognito-idp:ListUserPools",
         "s3:ListAllMyBuckets", "ecr:DescribeRepositories", "secretsmanager:ListSecrets",
-        "dynamodb:ListTables", "ses:ListEmailIdentities", "events:ListRules"
+        "dynamodb:ListTables", "ses:ListEmailIdentities", "events:ListRules",
+        "eks:ListClusters", "eks:DescribeCluster", "eks:ListNodegroups", "eks:DescribeNodegroup",
+        "states:ListStateMachines", "states:DescribeStateMachine", "kinesis:ListStreams", "kinesis:DescribeStreamSummary",
+        "kafka:ListClustersV2", "events:ListTargetsByRule", "lambda:ListEventSourceMappings"
       ],
       "Resource": "*"
     }

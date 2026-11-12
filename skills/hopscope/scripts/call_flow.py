@@ -18,17 +18,22 @@ from functools import lru_cache
 from pathlib import Path
 
 import langs
+from langs.common import read_contained
 
 DATA = json.loads(Path(sys.argv[1]).read_text())
 OUT = Path(sys.argv[2])
-ROOT = Path(DATA["base"])
+ROOT = Path(DATA["base"]).resolve()
 FILES = [f["p"] for f in DATA["files"]]
 SERVICES = sorted(DATA.get("services", []), key=len, reverse=True)
 MAX_DEPTH, MAX_STEPS = 4, 28
 
 BOTO_SERVICE = {"cognito-idp": "Cognito", "sqs": "SQS", "ses": "SES", "sesv2": "SES", "s3": "S3", "secretsmanager": "Secrets Manager",
                 "lambda": "Lambda", "ecs": "ECS", "ecr": "ECR", "sns": "SNS", "events": "EventBridge", "dynamodb": "DynamoDB",
-                "cloudwatch": "CloudWatch", "logs": "CloudWatch Logs", "apigateway": "API Gateway", "bedrock-runtime": "Bedrock"}
+                "cloudwatch": "CloudWatch", "logs": "CloudWatch Logs", "apigateway": "API Gateway", "bedrock-runtime": "Bedrock",
+                "stepfunctions": "Step Functions", "kinesis": "Kinesis", "firehose": "Firehose"}
+STEP_KIND = {"Step Functions": "workflow", "Kinesis": "stream", "Firehose": "stream"}  # a workflow started, records put on a stream
+NAME_ARGS = ("StreamName", "DeliveryStreamName", "name")  # a literal resource name worth showing on the step
+KAFKA_NAMES = re.compile(r"(^|\.|_)(producer|kafka|kafka_producer)$", re.I)
 SQL_METHODS = {"exec", "execute", "query", "add", "add_all", "commit", "scalars", "scalar", "get", "merge", "delete", "refresh", "flush", "fetch", "fetchrow", "fetchval", "first", "all"}
 DB_NAMES = re.compile(r"^(db|session|sess|conn|connection|async_session|self\.db|self\.session|self\._session|self\.repo\.session|tx)$")
 CACHE_NAMES = re.compile(r"redis|cache|valkey", re.I)
@@ -46,9 +51,12 @@ def service_root(path: str) -> str:
 
 @lru_cache(maxsize=None)
 def parse(path):
+    text = read_contained(ROOT, path)
+    if text is None:
+        return None
     try:
-        return ast.parse((ROOT / path).read_text(errors="ignore"))
-    except (OSError, SyntaxError, ValueError):
+        return ast.parse(text)
+    except (SyntaxError, ValueError):
         return None
 
 
@@ -161,10 +169,7 @@ def model_name(call):
 
 @lru_cache(maxsize=None)
 def source_lines(path):
-    try:
-        return (ROOT / path).read_text(errors="ignore").splitlines()
-    except OSError:
-        return []
+    return (read_contained(ROOT, path) or "").splitlines()
 
 
 def words(node):
@@ -308,7 +313,13 @@ def trace(path, fn, depth, steps, seen, cls=None, local_types=None, inherited=0,
         # AWS SDK via self.<attr> or module-level client
         boto = (cls or {}).get("boto", {}).get(head) or idx["boto_globals"].get(head)
         if boto:
-            steps.append([depth, "aws", f"{boto}: {to_api(meth)}", path, line, cond, why, via])
+            named = next((k.value.value for k in call.keywords if k.arg in NAME_ARGS and isinstance(k.value, ast.Constant) and isinstance(k.value.value, str)), "")
+            label = f"{boto}: {to_api(meth)}" + (f" {named[:60]}" if named and boto in STEP_KIND else "")
+            steps.append([depth, STEP_KIND.get(boto, "aws"), label, path, line, cond, why, via])
+            continue
+        if meth in ("send", "produce", "send_and_wait") and KAFKA_NAMES.search(head):
+            topic = call.args[0].value if call.args and isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str) else ""
+            steps.append([depth, "kafka", f"Kafka: send to {topic[:60]}" if topic else "Kafka: send", path, line, cond, why, via])
             continue
         if meth in ("send_message", "send_message_batch") and (not boto):
             steps.append([depth, "queue", "SQS: SendMessage", path, line, cond, why, via])

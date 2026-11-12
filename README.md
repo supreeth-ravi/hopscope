@@ -12,7 +12,7 @@ Claude or Codex reads your AWS account and your code, links the two, and gives y
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757?style=flat-square)](https://code.claude.com/docs/en/overview)
 [![Codex plugin](https://img.shields.io/badge/Codex-plugin-111?style=flat-square)](docs/codex.md)
 [![Tests](https://img.shields.io/github/actions/workflow/status/supreeth-ravi/hopscope/test.yml?branch=main&style=flat-square&label=tests)](https://github.com/supreeth-ravi/hopscope/actions/workflows/test.yml)
-[![Version](https://img.shields.io/badge/version-0.6.0-111?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.7.0-111?style=flat-square)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111?style=flat-square)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-%E2%89%A53.10-111?style=flat-square)](https://www.python.org)
 [![AWS read-only](https://img.shields.io/badge/AWS-read--only-111?style=flat-square)](skills/hopscope/references/iam-policy.json)
@@ -115,7 +115,29 @@ Compares the code, your Terraform/CloudFormation/compose files and the live acco
 <td colspan="2" valign="top">
 
 **📐 Works before you deploy**<br>
-Design mode reads docker compose, Terraform and CloudFormation/SAM files and links your code to the services they run: exactly where a compose file names the build folder, by name matching for Terraform and CloudFormation (doubtful links are listed by `hopscope.py review`). No AWS account, no credentials, no live numbers: the architecture, the traces and a few checks on what the files plan.
+Design mode reads docker compose, Terraform, CloudFormation/SAM and Kubernetes (plain manifests, Kustomize overlays, Helm charts without helm) and links your code to the services they run: exactly where a compose file or `skaffold.yaml` names the build folder, by name matching otherwise (doubtful links are listed by `hopscope.py review`). No AWS account, no credentials, no live numbers: the architecture, the traces and a few checks on what the files plan.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+**☸️ Kubernetes and EKS**<br>
+EKS clusters and node groups come with the inventory. Name a kubeconfig context (`--kube-context`) and Hopscope reads its workloads, Services, Ingresses and autoscalers with read-only `kubectl get` (never Secrets), links them to code like ECS services, and turns CrashLoopBackOff, image-pull, scheduling and out-of-memory events into actions.
+
+</td>
+<td valign="top">
+
+**🌊 Workflows and streams**<br>
+Step Functions with the services each state calls and their failed runs, Kinesis streams with reader lag, MSK, EventBridge targets and Lambda event sources. Code that starts a workflow or writes to a stream or topic is linked to the Lambdas that consume it, and traces follow it there.
+
+</td>
+</tr>
+<tr>
+<td colspan="2" valign="top">
+
+**👀 Seen in the browser**<br>
+Export a HAR from your browser's developer tools and run `hopscope.py observe --har`: routes your app really called are marked in traces ("seen in a browser capture: 12 requests, 10 2xx, 2 4xx"), and calls no scanned route serves are listed. Only methods, path patterns, status and timing are kept.
 
 </td>
 </tr>
@@ -216,10 +238,14 @@ Prefer the command line? See [Getting started](docs/getting-started.md#without-a
 | "Draw our architecture as Mermaid for the README" (`export`) | |
 | "What changed before the errors on Sunday?" (MCP `changes`) | Open **Timeline** and click the deploy before the spike |
 | "Is anything in AWS that isn't in our Terraform?" (MCP `drift`) | The **Drift** list under Timeline or Components |
+| "Map our Kubernetes manifests and Helm chart, no AWS" (`design`) | **Architecture**: one box per namespace |
+| "Include the workloads in our EKS context prod-eks" (`--kube-context`) | **Components → Kubernetes** |
+| "Which Lambda reads the clickstream, and is it keeping up?" | **Components → Workflows and streams** |
+| "Here is a HAR from my browser: which routes did it hit?" (`observe --har`, MCP `observed`) | The "seen ×N" pills in **Trace** |
 
 ## For agents
 
-Once a build exists, Claude Code gets Hopscope as an **MCP server** (registered by the plugin, read-only, standard-library Python). In a fresh session an agent can ask `impact("app/identity.py")` for what a change can break (dependent files, the routes whose code path reaches the file, the services they run on, the queues and workers downstream) or `trace("POST /orders")` for everything one API touches, without re-reading the code or the account. Other tools: `find_routes`, `who_calls`, `what_runs`, `resources`, `health`, `changes` (what changed between builds, recent ECS deploys) and `drift` (where code, files and AWS disagree). Codex users add the server with one `codex mcp add` line ([Hopscope in Codex](docs/codex.md#mcp-server)).
+Once a build exists, Claude Code gets Hopscope as an **MCP server** (registered by the plugin, read-only, standard-library Python). In a fresh session an agent can ask `impact("app/identity.py")` for what a change can break (dependent files, the routes whose code path reaches the file, the services they run on, the queues and workers downstream) or `trace("POST /orders")` for everything one API touches, without re-reading the code or the account. Other tools: `find_routes`, `who_calls`, `what_runs`, `resources`, `health`, `changes` (what changed between builds, recent ECS deploys), `drift` (where code, files and AWS disagree) and `observed` (routes seen in browser captures). Codex users add the server with one `codex mcp add` line ([Hopscope in Codex](docs/codex.md#mcp-server)).
 
 The same answers on the command line, and diagrams to paste into docs:
 
@@ -230,6 +256,7 @@ hopscope.py export --format mermaid --out architecture.mmd           # or --rout
 hopscope.py export --format drawio  --out architecture.drawio         # AWS icons, opens in draw.io
 hopscope.py changes                                                   # what changed since the last build (--since <snapshot> for older)
 hopscope.py drift                                                     # where code, infrastructure files and AWS disagree
+hopscope.py observe --har capture.har                                 # mark the routes a browser capture shows
 ```
 
 ## How it works
@@ -246,7 +273,8 @@ flowchart LR
 
 Python scripts do the collecting and linking; Claude or Codex runs them, checks the doubtful links with you, and explains the results. Details in [How it works](docs/how-it-works.md).
 
-**AWS:** ECS (Fargate and EC2), EC2, Application and Network Load Balancers, API Gateway, CloudFront, RDS and Aurora, ElastiCache, OpenSearch, DynamoDB, S3, SQS, SNS, EventBridge, Lambda, Cognito, SES, ECR, Secrets Manager, Cost Explorer.<br>
+**AWS:** ECS (Fargate and EC2), EKS (and its workloads through `kubectl`, opt-in), EC2, Application and Network Load Balancers, API Gateway, CloudFront, RDS and Aurora, ElastiCache, OpenSearch, DynamoDB, S3, SQS, SNS, EventBridge (rules and targets), Lambda (and its event sources), Step Functions, Kinesis Data Streams, MSK, Cognito, SES, ECR, Secrets Manager, Cost Explorer.<br>
+**Files (design mode):** docker compose, Terraform, CloudFormation/SAM, Kubernetes manifests, Kustomize, Helm charts, skaffold.yaml.<br>
 **Code:** Python (FastAPI, Flask), JavaScript and TypeScript (Express, NestJS), Go, Java and Kotlin (Spring Boot, Spring MVC, Micronaut, JAX-RS, Ktor), C# (ASP.NET Core controllers and minimal APIs). Call sequences with conditions for Python, Java, Kotlin and C#. Frontend calls (fetch, axios, Angular HttpClient) are linked to the backend routes they reach, so a trace starts at the button. Uses a [floorplan](https://github.com/haydenschmitty/floorplan) map when your repo has one.
 
 ## What it adds to your project
@@ -256,7 +284,7 @@ A `.hopscope/` folder with the collected data, the built page and the last 30 bu
 ## Privacy
 
 - **Read-only AWS access.** Describe/List/Get calls, CloudWatch metrics and Cost Explorer only — the exact [IAM policy](skills/hopscope/references/iam-policy.json).
-- **No secrets stored.** Container environment values are kept only when they are a queue URL or the bare hostname of a database, cache or search endpoint; account numbers are masked.
+- **No secrets stored.** Container environment values are kept only when they are a queue URL or the bare hostname of a database, cache or search endpoint; account numbers are masked. Kubernetes Secrets are never read, and a HAR file is read on your machine and reduced to methods, path patterns, status and timing.
 - **Stays on your machine** until you publish. Published pages in the Claude app are private until you share them. The local server only answers on localhost, and its Ask endpoint only answers the console page itself.
 - No analytics or tracking.
 

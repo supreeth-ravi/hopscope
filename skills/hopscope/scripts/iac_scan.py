@@ -1,5 +1,5 @@
 # skills/hopscope/scripts/iac_scan.py
-"""Read infrastructure files (docker compose, Terraform, CloudFormation/SAM) under the code base into
+"""Read infrastructure files (docker compose, Terraform, CloudFormation/SAM, Kubernetes) under the code base into
 aws.json, so Hopscope works with no AWS account. Writes an inventory marked "mode": "design".
 
     python iac_scan.py --code data/code.json [--region eu-west-1] --out data/aws.json
@@ -16,6 +16,7 @@ from pathlib import Path
 import iac_cfn
 import iac_common
 import iac_compose
+import iac_k8s
 import iac_terraform
 
 SKIP = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build", ".terraform", ".aws-sam", "cdk.out", "floorplan", ".hopscope"}
@@ -141,6 +142,13 @@ def scan(base: Path, region: str) -> dict:
                 add(iac_terraform.read("\n".join(texts), ", ".join(readable)), readable)
         except Exception as e:
             inv["skipped"].append({"file": readable[0], "error": type(e).__name__})
+    try:  # Kubernetes manifests, Kustomize and Helm: read across the whole tree, since overlays point at bases elsewhere
+        k8s_part, k8s_files, k8s_skipped = iac_k8s.scan(base)
+        inv["skipped"].extend(k8s_skipped)
+        if k8s_files:
+            add(k8s_part, k8s_files)
+    except Exception as e:  # noqa: BLE001 - one reader must not stop the scan
+        inv["skipped"].append({"file": "kubernetes", "error": type(e).__name__})
     inv["sources"].sort()
     return iac_common.mask_numbers(inv)  # a last pass: no account number leaves the scan, whatever field it hid in
 
@@ -159,7 +167,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"no infrastructure files under {base}: drift checks against files are skipped")
         return
     if not inv["sources"]:
-        msg = f"no infrastructure files found under {base} (looked for docker compose, Terraform and CloudFormation/SAM)."
+        msg = f"no infrastructure files found under {base} (looked for docker compose, Terraform, CloudFormation/SAM and Kubernetes manifests, Kustomize and Helm)."
         if inv["skipped"]:
             msg += " Skipped: " + ", ".join(f'{x["file"]} ({x["error"]})' for x in inv["skipped"])
         raise SystemExit(msg)

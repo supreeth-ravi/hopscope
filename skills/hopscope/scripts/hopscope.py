@@ -1,6 +1,6 @@
 """Hopscope: build a live ops view of your code and your AWS account.
 
-    hopscope.py all     --region ap-south-1 --repo ~/src/app [--repo …] [--profile p] [--overrides hopscope.json] [--workdir .hopscope]
+    hopscope.py all     --region ap-south-1 --repo ~/src/app [--repo …] [--profile p] [--kube-context ctx] [--overrides hopscope.json] [--workdir .hopscope]
     hopscope.py design  --repo ~/src/app [--repo …] [--overrides hopscope.json] [--workdir .hopscope]   # no AWS: code + compose/Terraform/CloudFormation files
     hopscope.py collect …same flags…        # gather data only
     hopscope.py build   [--workdir …]       # write the site from collected data
@@ -11,6 +11,7 @@
     hopscope.py export  --format mermaid|drawio [--route "<METHOD /path>"] --out FILE [--workdir …]
     hopscope.py changes [--since <snapshot>] [--workdir …]  # what changed since the last build (or a named snapshot)
     hopscope.py drift   [--workdir …]       # where code, infrastructure files and AWS disagree
+    hopscope.py observe --har capture.har [--har …] [--include-host h] [--workdir …]  # routes seen in browser captures (HAR)
 
 Data goes to <workdir>/data, the site to <workdir>/site (index.html + JSON files).
 """
@@ -35,8 +36,8 @@ import local_agent
 
 HERE = Path(__file__).resolve().parent
 TEMPLATE = HERE.parent / "assets" / "console.html"
-SITE_FILES = ("code.json", "aws.json", "flows.json", "ts.json", "model.json", "changes.json", "drift.json")
-OPTIONAL = ("flows.json", "ts.json", "changes.json", "drift.json")
+SITE_FILES = ("code.json", "aws.json", "flows.json", "ts.json", "model.json", "changes.json", "drift.json", "observed.json")
+OPTIONAL = ("flows.json", "ts.json", "changes.json", "drift.json", "observed.json")
 
 
 def run(script: str, *args: str) -> None:
@@ -64,10 +65,11 @@ def collect(a: argparse.Namespace, data: Path) -> None:
     data.mkdir(parents=True, exist_ok=True)
     prof = ["--profile", a.profile] if a.profile else []
     stg = ["--staging-pattern", a.staging_pattern] if a.staging_pattern else []
+    kube = [x for c in a.kube_context for x in ("--kube-context", c)] + (["--kube-contexts", a.kube_contexts] if a.kube_contexts else [])
     ov = ["--overrides", str(Path(a.overrides).resolve())] if a.overrides else []
     repos = [x for r in a.repo for x in ("--repo", str(Path(r).expanduser().resolve()))]
     print("1/8 AWS inventory (read-only)…")
-    run("aws_inventory.py", "--region", a.region, *prof, *stg, "--out", str(data / "aws.json"))
+    run("aws_inventory.py", "--region", a.region, *prof, *stg, *kube, "--out", str(data / "aws.json"))
     print("2/8 code map…")
     run("code_scan.py", *repos, *(["--no-floorplan"] if a.no_floorplan else []), "--out", str(data / "code.json"))
     print("3/8 call flows…")
@@ -288,15 +290,29 @@ def export(fmt: str, route: str | None, out: str | None, work: Path) -> None:
     print(f"wrote {out}")
 
 
+def observe(hars: list[str], hosts: list[str], data: Path, site: Path) -> None:
+    """Match browser captures to the scanned routes: data/observed.json, copied into an existing site."""
+    if not hars:
+        raise SystemExit("observe needs --har FILE (export one from the browser's developer tools: Network > Save all as HAR)")
+    if not (data / "code.json").exists():
+        raise SystemExit(f"no code map in {data}: run hopscope.py design or all first")
+    run("observe_har.py", "--code", str(data / "code.json"), *[x for h in hars for x in ("--har", str(Path(h).expanduser().resolve()))],
+        *[x for h in hosts for x in ("--include-host", h)], "--out", str(data / "observed.json"))
+    if (site / "index.html").exists():
+        shutil.copy(data / "observed.json", site / "observed.json")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("cmd", choices=["all", "collect", "design", "build", "review", "serve", "impact", "query", "export", "changes", "drift"])
+    ap.add_argument("cmd", choices=["all", "collect", "design", "build", "review", "serve", "impact", "query", "export", "changes", "drift", "observe"])
     ap.add_argument("target", nargs="?", help="impact: a file path; query: a route such as \"POST /orders\"")
     ap.add_argument("--region")
     ap.add_argument("--profile")
     ap.add_argument("--repo", action="append", default=[])
     ap.add_argument("--overrides", help="hopscope.json with manual links, labels, thresholds")
     ap.add_argument("--staging-pattern")
+    ap.add_argument("--kube-context", action="append", default=[], help="all/collect: also read this kubeconfig context's workloads with kubectl (read-only)")
+    ap.add_argument("--kube-contexts", help="all/collect: several kubeconfig contexts, comma-separated")
     ap.add_argument("--no-floorplan", action="store_true")
     ap.add_argument("--workdir", default=".hopscope")
     ap.add_argument("--port", type=int, default=8765)
@@ -306,6 +322,8 @@ def main() -> None:
     ap.add_argument("--route", help="export: a route to draw as a sequence diagram (mermaid only)")
     ap.add_argument("--out", help="export: file to write")
     ap.add_argument("--keep", type=int, default=30, help="snapshots to keep in <workdir>/snapshots (default 30)")
+    ap.add_argument("--har", action="append", default=[], help="observe: a HAR file exported from the browser (repeatable)")
+    ap.add_argument("--include-host", action="append", default=[], help="observe: also keep requests to this host")
     ap.add_argument("--since", help="changes: compare the latest build with this snapshot (a name under <workdir>/snapshots)")
     a = ap.parse_args()
     work = Path(a.workdir).expanduser().resolve()
@@ -330,6 +348,8 @@ def main() -> None:
         export(a.format, a.route, a.out, work)
     if a.cmd in ("changes", "drift"):
         report(a.cmd, a.since, work)
+    if a.cmd == "observe":
+        observe(a.har, a.include_host, data, site)
     if a.cmd == "serve":
         serve(site, a.port, local_agent.pick_engine(a.engine, a.model))
 

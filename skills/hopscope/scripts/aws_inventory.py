@@ -329,6 +329,8 @@ def main() -> None:
     ap.add_argument("--region", required=True)
     ap.add_argument("--profile")
     ap.add_argument("--staging-pattern", help="regex marking non-production names (default: stag|dev|test|qa…)")
+    ap.add_argument("--kube-context", action="append", default=[], help="read this kubeconfig context's workloads with kubectl (read-only)")
+    ap.add_argument("--kube-contexts", help="several contexts, comma-separated")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
     s = session(a.profile, a.region)
@@ -343,6 +345,11 @@ def main() -> None:
            "lb": safe("load balancers", collect_lb, s, cw, ecs) or [], "sqs": safe("sqs", collect_sqs, s, cw) or [],
            "lambda": safe("lambda", collect_lambda, s, cw) or [], "cost": safe("cost explorer", collect_cost, s) or []}
     out.update(safe("other services", collect_misc, s, cw) or {})
+    import aws_eks  # imported here: they build on this module's masking helpers
+    import aws_streams
+
+    aws_streams.add_to(out, s, cw, safe)
+    aws_eks.add_to(out, s, aws_eks.contexts(a.kube_context, a.kube_contexts), safe)
     for x in ecs:  # target-group ARNs carry the account number; only their names are needed after linking
         x["tgs"] = [t.split("/")[-2] if "/" in t else t for t in x["tgs"]]
     json.dump(out, open(a.out, "w"), separators=(",", ":"))

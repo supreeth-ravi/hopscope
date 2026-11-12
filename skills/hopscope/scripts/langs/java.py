@@ -43,6 +43,8 @@ EXT = {
     "s3": r"awssdk\.services\.s3\b|amazonaws\.services\.s3\b|\bS3(Async)?Client\b|\bAmazonS3\b|\bS3Template\b",
     "cognito": r"cognitoidentityprovider",
     "kafka": r"org\.apache\.kafka|\bKafkaTemplate\b|@KafkaListener|springframework\.kafka",
+    "sfn": r"awssdk\.services\.sfn\b|amazonaws\.services\.stepfunctions|\bSfn(Async)?Client\b|\bAWSStepFunctions\b",
+    "kinesis": r"awssdk\.services\.kinesis\b|amazonaws\.services\.kinesis\b|\bKinesis(Async)?Client\b|\bAmazonKinesis\b|KinesisProducer",
     "http": r"\bRestTemplate\b|\bWebClient\b|\bRestClient\b|@FeignClient|java\.net\.http\.HttpClient|\bOkHttpClient\b|io\.ktor\.client|retrofit2",
     "llm": r"\bcom\.openai\b|\bcom\.anthropic\b|langchain4j|springframework\.ai\b",
     "tracing": r"io\.opentelemetry|io\.sentry|micrometer\.tracing",

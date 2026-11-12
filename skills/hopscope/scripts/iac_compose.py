@@ -17,10 +17,10 @@ FILE = re.compile(r"(^|/)(docker-)?compose[^/]*\.ya?ml$", re.I)
 
 def _env(raw: Any) -> dict[str, str]:
     if isinstance(raw, dict):
-        return {str(k): "" if v is None else str(v) for k, v in raw.items()}
+        return {c.scalar(k): c.scalar(v) for k, v in raw.items() if c.scalar(k)}
     out = {}
-    for item in raw or []:
-        k, _, v = str(item).partition("=")
+    for item in raw if isinstance(raw, list) else []:
+        k, _, v = c.scalar(item).partition("=")
         out[k] = v
     return out
 
@@ -89,13 +89,13 @@ def _build_dir(raw: Any, rel: str) -> str | None:
     if raw is None:
         return None
     ctx = raw if isinstance(raw, str) else (raw.get("context") if isinstance(raw, dict) else None) or "."
-    ctx = str(ctx)
+    ctx = c.scalar(ctx)
     if _unsafe(ctx):
         return None
     path = posixpath.normpath(posixpath.join(posixpath.dirname(rel), ctx))
     if path == ".." or path.startswith("../"):
         return None
-    dockerfile = str(raw.get("dockerfile") or "") if isinstance(raw, dict) else ""
+    dockerfile = c.scalar(raw.get("dockerfile") or "") if isinstance(raw, dict) else ""
     if dockerfile and not _unsafe(dockerfile):
         folder = posixpath.normpath(posixpath.join(path, posixpath.dirname(dockerfile)))
         if _below(folder, path):
@@ -106,12 +106,16 @@ def _build_dir(raw: Any, rel: str) -> str | None:
 def _port(p: Any) -> int | None:
     """The port a service is reached on: the published one when there is one, else the container's."""
     if isinstance(p, dict):
-        spec = str(p.get("published") or p.get("target") or "")
+        spec = c.scalar(p.get("published") or p.get("target") or "")
     else:
-        parts = str(p).split("/")[0].split(":")
+        parts = c.scalar(p).split("/")[0].split(":")
         spec = parts[-2] if len(parts) >= 3 else parts[0]
     m = re.match(r"\d+", spec)
     return int(m.group(0)) if m else None
+
+
+def _items(v: Any) -> list:
+    return v[:200] if isinstance(v, list) else []
 
 
 def _load(text: str) -> dict | None:
@@ -146,11 +150,11 @@ def read(text: str, rel: str, base: Path | None = None) -> dict:
     bare = not posixpath.dirname(rel)  # at the root the cluster name already says compose
     entry = c.lb_row(cluster if bare else f"{cluster} (compose)", source="compose")
     internal = c.lb_row(f"{cluster} (internal)" if bare else f"{cluster} (compose, internal)", internal=True, source="compose")  # expose: reachable by other services only
-    known = {str(n): {int(x) for p in [*(sv.get("ports") or []), *(sv.get("expose") or [])] for x in re.findall(r"\d+", str(p))}
+    known = {str(n): {int(x) for p in [*_items(sv.get("ports")), *_items(sv.get("expose"))] for x in re.findall(r"\d+", c.scalar(p))}
              for n, sv in services.items() if isinstance(sv, dict)} | {str(n): set() for n, sv in services.items() if not isinstance(sv, dict)}
     for name, s in services.items():
         s = s if isinstance(s, dict) else {}
-        image, build = str(s.get("image") or ""), _build_dir(s.get("build"), rel)
+        image, build = c.scalar(s.get("image") or ""), _build_dir(s.get("build"), rel)
         kind = c.infra_kind(image) if build is None else None
         if kind == "rds":
             part["rds"].append({**c.rds_row(name, c.image_engine(image), endpoint=name), "env": c.env_of(f"{cluster}/{name}"), "cluster": cluster, "src": rel})
@@ -165,7 +169,7 @@ def read(text: str, rel: str, base: Path | None = None) -> dict:
                                      images=[image] if image else [], env_vars={**_env_files(s.get("env_file"), rel, base), **_env(s.get("environment"))}, build=build, build_from=rel, source="compose",
                                      known_hosts=known))
         for lb, key in ((entry, "ports"), (internal, "expose")):
-            for p in s.get(key) or []:
+            for p in _items(s.get(key)):
                 port = _port(p)
                 if port:
                     lb["routes"].append(c.route(f"port {port}", name, [f"{cluster}/{name}"], port=port))

@@ -38,6 +38,8 @@ EXT = {
     "ses": r"Amazon\.SimpleEmail(V2)?\b|IAmazonSimpleEmailService(V2)?",
     "s3": r"Amazon\.S3\b|IAmazonS3|AmazonS3Client",
     "kafka": r"Confluent\.Kafka|\.UsingKafka|\bAddRider\b",
+    "sfn": r"Amazon\.StepFunctions\b|IAmazonStepFunctions|AmazonStepFunctionsClient",
+    "kinesis": r"Amazon\.Kinesis\b|IAmazonKinesis|AmazonKinesisClient",
     "http": r"\bHttpClient\b|IHttpClientFactory|\bRefit\b|RestSharp|\bFlurl\b",
     "llm": r"Azure\.AI\.OpenAI|\bOpenAI\.|Microsoft\.SemanticKernel|\bAnthropic\b",
     "tracing": r"OpenTelemetry|\bSentry\b|ApplicationInsights",

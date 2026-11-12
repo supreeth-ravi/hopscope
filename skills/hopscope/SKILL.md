@@ -29,13 +29,16 @@ view of what the files describe, skip the AWS steps and run:
 $PY <skill-dir>/scripts/hopscope.py design --repo <path> [--repo <path> …] [--overrides hopscope.json] --workdir <project>/.hopscope
 ```
 
-It reads docker compose, Terraform and CloudFormation/SAM files under the repos, links code to the
-services they run (exactly from compose `build:` folders, by name matching for Terraform and
-CloudFormation, with doubtful links listed by `hopscope.py review`), and writes the same console. Say plainly that it is built
+It reads docker compose, Terraform, CloudFormation/SAM and Kubernetes files under the repos (plain
+manifests, Kustomize overlays as written, Helm charts best effort without helm), links code to the
+services they run (exactly from compose `build:` folders and `skaffold.yaml` artifacts, by name matching
+otherwise, with doubtful links listed by `hopscope.py review`), and writes the same console. Kubernetes
+workloads appear as services in one box per namespace, Services/Ingresses/HTTPRoutes as entry points. Say plainly that it is built
 from code and infrastructure files with **no live numbers** (no traffic, health or cost). Environment
 values from those files are filtered: only queue names, masked hosts and service names are kept, so no
 secrets are stored. Not read yet: Serverless Framework, CDK (unless `cdk synth` output exists),
-Kubernetes/Helm, Pulumi, and Terraform modules, variables and `for_each`. Once the user signs in to AWS,
+Pulumi, Helm template logic beyond simple `.Values`, remote Kustomize bases, and Terraform modules,
+variables and `for_each`. Once the user signs in to AWS,
 offer `hopscope.py all` for the live view.
 
 ## Workflow
@@ -64,6 +67,11 @@ names containing stag/dev/test/qa as non-production (`--staging-pattern` overrid
 $PY <skill-dir>/scripts/hopscope.py all --region <region> --repo <path> [--repo <path> …] [--profile <p>] \
     [--overrides hopscope.json] --workdir <project>/.hopscope
 ```
+
+The inventory also reads EKS clusters, Step Functions, Kinesis, MSK, EventBridge targets and Lambda event
+sources. For Kubernetes workloads on EKS (or any cluster), add `--kube-context <ctx>` (or
+`--kube-contexts a,b`): it runs read-only `kubectl get` for workloads, services, ingresses, HPAs and events
+(never Secrets) and is skipped with a warning if `kubectl` is missing. Only pass contexts the user names.
 
 This runs eight steps (inventory, code map, call flows, linking, hourly metrics, drift, health rules,
 snapshot) and writes `<workdir>/site/`. Drift and the snapshot never stop the build; if they fail, it warns. It takes 1–5 minutes on a typical account. Individual steps that lack
@@ -116,6 +124,22 @@ it is marked low confidence, and don't treat the "uncertain" list as drift.
 The data is a snapshot. Offer to re-run on a schedule (the `schedule` skill, or a cron job running
 `hopscope.py all` and republishing to the same artifact URL).
 
+### 7. What the browser really calls (optional)
+
+If the user wants traces backed by real traffic, ask them to record a HAR: in Chrome open DevTools
+(View > Developer > Developer Tools), the **Network** tab, tick **Preserve log**, use the app, then right-click
+the request list and choose **Save all as HAR with content** (or the download arrow). Then run
+
+```bash
+$PY <skill-dir>/scripts/hopscope.py observe --har <file.har> [--har …] [--include-host api.example.com] --workdir <project>/.hopscope
+```
+
+Tell the user plainly: **a HAR holds their cookies, tokens and request bodies.** Hopscope reads it on this
+machine and keeps only the method, the path pattern (ids become `{id}`), the status and the timing; they
+should delete the HAR afterwards and never commit or share it. Don't open or print the HAR yourself. Traces
+then say "seen in a browser capture (N requests: …)", and requests no scanned route serves are listed
+(`observe` prints them; MCP `observed`). Mention those: they are often a missing repo or a dead endpoint.
+
 ## Answering questions once it is built
 
 When `.hopscope/` already holds a build, answer questions about the system from it instead of
@@ -129,8 +153,9 @@ re-reading the code or the account.
   from the button that makes the call; its `calledFrom` lists the frontend files that call a route), `who_calls` for callers of a file or function,
   `what_runs` for the compute, queues and database behind a code folder, `resources` for the inventory,
   `health` for one resource's status and the actions that mention it, `changes` for "what changed since
-  the last build / before the outage?" (each change, earlier builds, recent ECS deploys and revisions), and
-  `drift` for "does what's deployed match our Terraform and code?" (each finding with its evidence). In Codex the server is added
+  the last build / before the outage?" (each change, earlier builds, recent ECS deploys and revisions),
+  `drift` for "does what's deployed match our Terraform and code?" (each finding with its evidence), and
+  `observed` for "which routes did the browser capture hit, and what did it call that no route serves?". In Codex the server is added
   by hand (see `docs/codex.md`). If a tool says there is no data, build first (`all` or `design`).
 - **Command line.** The same answers as text:
   `$PY <skill-dir>/scripts/hopscope.py impact <file> --workdir <project>/.hopscope` and
@@ -166,7 +191,11 @@ routes, code paths and numbers still describe the real system. Build the demo fr
 
 ## Files
 
-- `scripts/hopscope.py` — entry point (`all`, `collect`, `design`, `build`, `review`, `serve`, `impact`, `query`, `export`, `changes`, `drift`)
+- `scripts/hopscope.py` — entry point (`all`, `collect`, `design`, `build`, `review`, `serve`, `impact`, `query`, `export`, `changes`, `drift`, `observe`)
+- `scripts/iac_k8s.py`, `iac_kustomize.py`, `iac_helm.py`, `k8s_map.py`, `k8s_files.py` — Kubernetes manifests, Kustomize and Helm in design mode
+- `scripts/aws_eks.py`, `scripts/aws_streams.py`, `scripts/rules_streams.py` — EKS and kubectl (opt-in), workflows and streams, their rules
+- `scripts/linker_streams.py`, `scripts/hopscope_streams.py` — code ↔ streams and their Lambda consumers, in links and traces
+- `scripts/observe_har.py`, `scripts/hopscope_observed.py` — browser captures (HAR) matched to routes
 - `scripts/history.py` — snapshots of every build (`<workdir>/snapshots/`, last 30) and `changes.json`
 - `scripts/drift.py`, `drift_code.py`, `drift_names.py` — drift between code, infrastructure files and AWS (`drift.json`)
 - `scripts/hopscope_changes.py` — answers about changes and drift for the CLI and MCP

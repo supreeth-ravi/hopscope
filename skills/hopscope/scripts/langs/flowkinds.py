@@ -13,7 +13,10 @@ AWS_TYPES = (("SQS", r"Sqs(Async)?Client|AmazonSQS(Async)?(Client)?|IAmazonSQS|S
              ("SNS", r"Sns(Async)?Client|AmazonSNS\w*|IAmazonSimpleNotificationService|SnsTemplate"),
              ("DynamoDB", r"DynamoDb(Async)?Client|AmazonDynamoDB\w*|IAmazonDynamoDB|DynamoDBContext|IDynamoDBContext"),
              ("Lambda", r"Lambda(Async)?Client|AWSLambda\w*|IAmazonLambda"),
-             ("Secrets Manager", r"SecretsManager(Async)?Client|IAmazonSecretsManager|AWSSecretsManager\w*"))
+             ("Secrets Manager", r"SecretsManager(Async)?Client|IAmazonSecretsManager|AWSSecretsManager\w*"),
+             ("Step Functions", r"Sfn(Async)?Client|AWSStepFunctions\w*|IAmazonStepFunctions|AmazonStepFunctionsClient"),
+             ("Kinesis", r"Kinesis(Async)?Client|AmazonKinesis\w*|IAmazonKinesis"))
+STEP_KIND = {"Step Functions": "workflow", "Kinesis": "stream"}  # calls that start a workflow or put records on a stream
 AWS_RX = [(svc, re.compile(rf"^(?:{rx})$")) for svc, rx in AWS_TYPES]
 HTTP_TYPE = re.compile(r"^(RestTemplate|WebClient|RestClient|HttpClient|OkHttpClient|IHttpClientFactory|IFlurlClient|RestSharp\w*|RestClient\w*)$")
 CACHE_TYPE = re.compile(r"^(\w*RedisTemplate|Jedis|JedisPool|JedisCluster|RedisCommands|RedisAsyncCommands|RedissonClient|IDatabase|IDatabaseAsync|"

@@ -20,7 +20,7 @@ from pathlib import Path
 
 import code_clients
 import langs
-from langs.common import humanize, shared_externals
+from langs.common import MAX_FILE_BYTES, humanize, read_contained, shared_externals
 
 SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "env", "__pycache__", "dist", "build", ".next", "site-packages", ".tox", ".mypy_cache",
              "coverage", "vendor", ".terraform", "migrations", "alembic", "tests", "test", "__tests__", "floorplan"}
@@ -28,7 +28,7 @@ LANG_BY_EXT = langs.by_suffix()
 CODE_EXT = {ext: lang.NAME for ext, lang in LANG_BY_EXT.items()}
 SERVICE_MARKERS = langs.service_markers()
 BUILD_DIRS = langs.build_dirs()
-MAX_FILE_BYTES = 400_000
+
 METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "WS", "ANY"}
 TEST_NAME = re.compile(r"(\.test|\.spec|_test)\.\w+$|\.d\.ts$|\.min\.js$")
 __all__ = ["humanize", "scan", "from_floorplan", "service_roots", "externals"]
@@ -235,11 +235,9 @@ def from_floorplan(graph_path: Path, repo: Path) -> CodeMap:
     files = g["files"]
     index = {f["p"]: i for i, f in enumerate(files)}
     cm = CodeMap()
+    root = repo.resolve()
     for f in files:
-        try:
-            src = (repo / f["p"]).read_text(errors="ignore") if f.get("l") in ("python", "javascript", "typescript") else ""
-        except OSError:
-            src = ""
+        src = (read_contained(root, str(f["p"])) or "") if f.get("l") in ("python", "javascript", "typescript") else ""
         cm.files.append({"p": f["p"], "m": f.get("n", ""), "t": f.get("name", ""), "d": f.get("d", ""), "x": externals(src), "loc": f.get("loc", 0)})
     for link in g["links"]:
         a, b = link["a"], link["b"]

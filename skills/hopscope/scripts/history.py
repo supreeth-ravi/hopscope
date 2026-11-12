@@ -34,6 +34,10 @@ FIELDS = {  # what is compared for each kind of resource (metrics are left out: 
     "ec2": ("type", "state"),
     "cache": ("type", "engine"),
     "search": ("type", "count"),
+    "sfn": ("type",),
+    "kinesis": ("shards", "mode"),
+    "msk": ("brokers", "instance", "version"),
+    "eks": ("version",),
 }
 NAMED = ("sns", "cognito", "apigw", "cdn", "dynamodb", "eventbridge", "ses")
 LABELS = {"taskDef": "task definition", "tgs": "target groups", "minAcu": "min ACU", "maxAcu": "max ACU", "mem": "memory MB"}
@@ -357,10 +361,14 @@ def deploy_action(aws: dict, ts: dict) -> list[list]:
              "Compare it with the revision before (hopscope.py changes, Timeline tab) and roll back if it is the cause."]]
 
 
-FAILURES = (("no capacity to place the task", re.compile(r"was unable to place a task", re.I),
+FAILURES = (("no capacity to place the task", re.compile(r"was unable to place a task|^FailedScheduling:", re.I),
              "Check cluster capacity, subnets and the task's CPU and memory against what is free."),
-            ("image could not be pulled", re.compile(r"CannotPullContainerError", re.I),
+            ("image could not be pulled", re.compile(r"CannotPullContainerError|^ImagePullBackOff:", re.I),
              "Check the image tag exists and the execution role can pull from the registry."),
+            ("container keeps crashing", re.compile(r"^CrashLoopBackOff:"),  # Kubernetes warning events (aws_eks.py)
+             "Read the crashed container's last logs (kubectl logs --previous) for the error it exits with."),
+            ("container ran out of memory", re.compile(r"^OOMKilled:"),
+             "Raise the container's memory limit, or find what grows, before it is killed again."),
             ("container health checks failed", re.compile(r"failed container health checks", re.I),
              "Check the container's health command and start-up time in the latest revision's logs."),
             ("load balancer health checks failed", re.compile(r"failed ELB health checks|is unhealthy", re.I),

@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 
 import drift_names as n
+from langs.common import read_contained
 
 STRONG_QUEUE = re.compile(r"""["']([A-Za-z0-9_-]{3,80}\.fifo)["']|https://sqs\.[a-z0-9-]+\.amazonaws\.com/[0-9*]{12}/([A-Za-z0-9_.-]{1,80})""")
 VAR_QUEUE = re.compile(r"""\b[A-Z][A-Z0-9_]*QUEUE[A-Z0-9_]*\s*[:=]\s*["']([A-Za-z0-9_.-]{3,80})["']""")
@@ -27,15 +28,9 @@ def texts(code: dict) -> list[tuple[str, str]]:
         rel = str(f.get("p", "")) if isinstance(f, dict) else ""
         if not rel or NOT_APP_CODE.search(rel):
             continue
-        p = base / rel
-        try:
-            # code.json is data: read only regular files that stay under the scanned base, never through a symlink
-            if p.is_symlink() or not p.resolve().is_relative_to(base):
-                continue
-            if p.is_file() and p.stat().st_size <= MAX_FILE:
-                out.append((rel, p.read_text(errors="ignore")))
-        except (OSError, RuntimeError, ValueError):
-            continue
+        text = read_contained(base, rel, MAX_FILE)
+        if text is not None:
+            out.append((rel, text))
     return out
 
 

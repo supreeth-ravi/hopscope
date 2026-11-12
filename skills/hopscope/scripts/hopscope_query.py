@@ -17,12 +17,14 @@ from pathlib import Path
 from typing import Any
 
 import hopscope_callers as callers
+import hopscope_observed as observed
+import hopscope_streams as streams
 
 MAX_STR, MAX_ITEMS, MAX_DEPTH = 300, 50, 6
 RUNS = {0: "always", 1: "conditional", 2: "on error"}
 LINK_KINDS = {0: "import", 1: "http", 2: "queue"}
 METRIC_FIELDS = ("cpu", "mem", "memMax", "conns", "credits", "creditMin", "surplus")
-FILES = ("code.json", "flows.json", "model.json", "aws.json", "links.json", "changes.json", "drift.json")
+FILES = ("code.json", "flows.json", "model.json", "aws.json", "links.json", "changes.json", "drift.json", "observed.json")
 
 
 class NoData(Exception):
@@ -46,7 +48,7 @@ def load(data_dir: str | Path) -> dict:
                 raise NoData(f"{name} in {d} could not be read ({type(e).__name__}); re-run hopscope.py design or all") from e
     if "code" not in out or "model" not in out:
         raise NoData(f"no Hopscope data in {d}: run hopscope.py design or all first")
-    for key in ("flows", "aws", "links", "changes", "drift"):
+    for key in ("flows", "aws", "links", "changes", "drift", "observed"):
         out.setdefault(key, {})
     out["paths"] = [str(f.get("p", "")) for f in out["code"].get("files", []) if isinstance(f, dict)]
     return out
@@ -216,7 +218,9 @@ def _queues_reached(data: dict, service: str | None, steps: list[list]) -> list[
     out = []
     for name, basis in picks:
         w = workers.get(name) or []
-        out.append({"queue": clip(name), "worker": clip(w[0]) if w else None, "job": clip(w[1]) if len(w) > 1 else None, "basis": basis})
+        lambdas = streams.consumers(data, "sqs", name)  # Lambda functions reading it through an event source mapping
+        out.append({"queue": clip(name), "worker": clip(w[0]) if w else None, "job": clip(w[1]) if len(w) > 1 else None,
+                    **({"consumers": lambdas} if lambdas else {}), "basis": basis})
     return out[:MAX_ITEMS]
 
 
@@ -327,9 +331,10 @@ def trace(data: dict, route: str | int) -> dict:
     return {"route": _route_name(r), "title": clip(r.get("t")), "handler": _at(data, r.get("f"), r.get("l")), "service": service,
             "compute": shown, "entry": _entry(data, compute), "steps": out_steps,
             "traced": bool(steps) or handler_path.endswith(TRACED),
-            "queues": _queues_reached(data, service, steps), "database": _database(data, service, steps),
+            "queues": _queues_reached(data, service, steps), "streams": streams.reached(data, service, steps), "database": _database(data, service, steps),
             "reaches": sorted({clip(s[1]) for s in steps if len(s) > 1 and s[1] != "call"}), "calledFrom": callers.called_from(data, idx),
             **({"matched": matched} if matched else {}),
+            **({"observed": seen} if (seen := observed.for_route(data, idx)) else {}),
             **({"note": UNCONFIRMED_NOTE} if _any_unconfirmed(shown) else {})}
 
 

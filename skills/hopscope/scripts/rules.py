@@ -15,6 +15,7 @@ from pathlib import Path
 
 import drift
 import history
+import rules_streams
 
 THRESHOLDS = {"err_pct_critical": 5.0, "mem_critical": 85.0, "mem_warn": 75.0, "cpu_warn": 85.0, "db_pinned_hours": 12, "db_cpu_critical": 90.0,
               "single_ec2_share": 0.25, "queue_age_warn_s": 3600, "ecr_repos_warn": 200}
@@ -51,7 +52,7 @@ def infra_entries(inv: dict, links: dict) -> tuple[list[dict], dict[str, str]]:
         name = x["n"] if counts[x["n"]] == 1 or x["env"] == "prod" else f'{x["n"]} ({x["cluster"]})'
         rows.append({"n": name, "key": key, "sys": sys_id, "kind": "ecs", "env": x["env"], "cpu": round(x["cpu"], 2) if x["running"] else 0,
                      "mem": round(x["mem"], 1) if x["running"] and not design else None, "memMax": x["memMax"], "size": x["size"] or (f'planned in {x.get("source") or "files"}' if design else "Fargate"),
-                     "cluster": x["cluster"], "tasks": x["running"]})
+                     "cluster": x["cluster"], "tasks": x["running"], **({"src": "kubernetes", "workload": x.get("workload"), "hpa": x.get("hpa")} if x.get("source") == "kubernetes" else {})})
     for e in inv["ec2"]:
         if e["state"] != "running":
             continue
@@ -85,10 +86,13 @@ def evaluate(inv: dict, ts: dict, links: dict, rows: list[dict], th: dict) -> tu
     running = {f'{x["cluster"]}/{x["n"]}': x["running"] for x in inv["ecs"]}
     # Load balancers: error share and routes that lead nowhere.
     for lb in inv["lb"]:
+        k8s = lb.get("source") == "kubernetes"  # Kubernetes services carry no load balancer metrics: only dead routes are checked
         dead = [r for r in lb["routes"] if (r["services"] and all(running.get(s, 0) == 0 for s in r["services"])) or (not r["services"] and r["targets"] and not any(t == "healthy" for t in r["targets"])) or (not r["services"] and not r["targets"])]
         for r in dead:
             for s in r["services"]:
                 flag_key(rows, s, "bad", f'0 tasks, but {lb["n"]} routes {r["when"]} here')
+        if k8s:
+            continue
         if lb["type"] == "application" and lb["req"] > 0:
             err = lb["err"] / lb["req"] * 100
             if err >= th["err_pct_critical"]:
@@ -119,7 +123,7 @@ def evaluate(inv: dict, ts: dict, links: dict, rows: list[dict], th: dict) -> tu
         if d["env"] != "prod" and d["serverless"] and (d["minAcu"] or 0) > 0:
             flag(rows, d["n"], "warn", f'Never pauses (minimum {d["minAcu"]} ACU)')
             savings.append([f'Let staging database {d["n"]} pause (minimum {d["minAcu"]} → 0 ACU)', "≈ $30–45"])
-        if d["conns"] <= 1 and d["acu"] < 0.2:
+        if d["conns"] <= 1 and d["acu"] < 0.2 and d.get("source") != "kubernetes":
             flag(rows, d["n"], "warn", f'{d["conns"]:.0f} connection in 3 days')
     # Containers.
     for x in inv["ecs"]:
@@ -133,9 +137,9 @@ def evaluate(inv: dict, ts: dict, links: dict, rows: list[dict], th: dict) -> tu
             flag_key(rows, key, "warn", f'Memory peaked at {x["memMax"]:.0f}%')
         if x["cpuMax"] >= th["cpu_warn"] and x["cpu"] > 40:
             flag_key(rows, key, "warn", f'CPU often high (avg {x["cpu"]:.0f}%)')
-        if x["env"] != "prod" and x["cpu"] < 1 and (x["mem"] or 0) < 30:
+        if x["env"] != "prod" and x["cpu"] < 1 and (x["mem"] or 0) < 30 and x.get("source") != "kubernetes":
             flag_key(rows, key, "warn", "Staging, idle. Scale to zero when not testing")
-    singles = [x for x in inv["ecs"] if x["env"] == "prod" and x["running"] == 1]
+    singles = [x for x in inv["ecs"] if x["env"] == "prod" and x["running"] == 1 and not x.get("hpa") and x.get("workload") not in ("CronJob", "Job", "DaemonSet")]
     if singles and len(singles) >= 0.5 * max(1, sum(1 for x in inv["ecs"] if x["env"] == "prod" and x["running"])):
         actions.append(["warn", f"{len(singles)} production services run a single task", "Any restart or deploy is a short outage for that service.",
                         "Run at least 2 tasks for the services on the main request path."])
@@ -178,7 +182,7 @@ def evaluate_design(inv: dict, links: dict) -> list[list]:
     """Checks that need no metrics: what the files say is planned."""
     actions: list[list] = []
     orphans = [f'{lb["n"]}: {r["when"]}' for lb in inv["lb"] for r in lb["routes"]
-               if not r["services"] and not r.get("attached") and r.get("tgType", "ip") not in ("lambda", "alb", "instance")]
+               if not r["services"] and not r.get("attached") and r.get("tgType", "ip") not in ("lambda", "alb", "instance", "external")]
     if orphans:  # the target group may be served from elsewhere, so this is a question, not a fault
         actions.append(["warn", f"{len(orphans)} route(s) have no service for them in these files",
                         f'{"; ".join(orphans[:5])}. The target group may be served from another folder, module or account.',
@@ -187,7 +191,8 @@ def evaluate_design(inv: dict, links: dict) -> list[list]:
     if no_dlq:
         actions.append(["warn", f"{len(no_dlq)} queue(s) have no dead-letter queue", f'{", ".join(no_dlq[:5])}: a message that keeps failing is retried forever or lost.',
                         "Add a dead-letter queue with a redrive policy."])
-    singles = [x["n"] for x in inv["ecs"] if x["env"] == "prod" and x["desired"] == 1 and x.get("ownImage") is not False and x.get("source") != "compose"]
+    singles = [x["n"] for x in inv["ecs"] if x["env"] == "prod" and x["desired"] == 1 and x.get("ownImage") is not False and x.get("source") != "compose"
+               and not x.get("hpa") and x.get("workload") not in ("CronJob", "Job", "DaemonSet")]  # jobs run to completion; a DaemonSet runs on every node
     if singles:
         actions.append(["warn", f"{len(singles)} production service(s) planned with a single task", f'{", ".join(singles[:5])}: any restart or deploy is a short outage.',
                         "Set the desired count to at least 2 for services on the request path."])
@@ -204,14 +209,15 @@ def evaluate_design(inv: dict, links: dict) -> list[list]:
     return actions
 
 
-def extra_actions(d: Path, inv: dict, ts: dict, design: bool) -> tuple[list[list], list[list]]:
-    """(deploy actions, drift actions): a deploy right before an error jump, services whose tasks failed to start (at most three),
-    and at most three items from the drift report."""
+def extra_actions(d: Path, inv: dict, ts: dict, design: bool, th: dict | None = None) -> tuple[list[list], list[list]]:
+    """(deploy and stream actions, drift actions): a deploy right before an error jump, services whose tasks failed to start (at most
+    three), failed Step Functions executions, late Kinesis readers and failing event source mappings, and at most three items from
+    the drift report."""
     first: list[list] = []
     last: list[list] = []
     try:
         if not design:
-            first = history.deploy_action(inv, ts) + history.failure_actions(inv)
+            first = history.deploy_action(inv, ts) + history.failure_actions(inv) + rules_streams.actions(inv, th or THRESHOLDS)
         rep = json.loads((d / "drift.json").read_text()) if (d / "drift.json").exists() else {}
         last = drift.actions(rep)
     except (ValueError, KeyError, TypeError) as e:  # a malformed extra file must not stop the model
@@ -253,7 +259,7 @@ def main() -> None:
     rows, labels = infra_entries(inv, links)
     design = inv.get("mode") == "design"
     actions, savings = (evaluate_design(inv, links), []) if design else evaluate(inv, ts, links, rows, th)
-    first, last = extra_actions(d, inv, ts, design)
+    first, last = extra_actions(d, inv, ts, design, th)
     actions = first + actions + last  # a deploy right before errors is the lead worth reading first among the warnings
     actions.sort(key=lambda a: {"bad": 0, "warn": 1}.get(a[0], 2))
     crit = [x for x in actions if x[0] == "bad"]
@@ -268,7 +274,7 @@ def main() -> None:
     model = {"meta": {"mode": inv.get("mode", "live"), "region": inv["region"], "account": inv.get("account"), "collectedAt": inv["collectedAt"], "codeSource": code.get("source"),
                       "company": ov.get("company") or ""},
              "infra": rows, "systems": labels, "placement": placement, "queues": links["queues"], "queueWorkers": links["queueWorkers"],
-             "tgHost": links["tgHost"], "dbFor": links["dbFor"], "primaryDb": (ts.get("labels") or {}).get("db"),
+             "tgHost": links["tgHost"], "dbFor": links["dbFor"], "streams": links.get("streams") or {}, "consumers": links.get("consumers") or {}, "primaryDb": (ts.get("labels") or {}).get("db"),
              "actions": actions, "savings": savings, "spend": inv.get("cost", [])[:12], "status": status,
              "examples": ov.get("examples") or examples(code, flows, set(links["codeToCompute"])), "review": links["review"], "unplaced": links["unplaced"]}
     (d / "model.json").write_text(json.dumps(model, separators=(",", ":")))
