@@ -49,10 +49,13 @@ def impact_text(r: dict) -> str:
 
 def trace_text(t: dict) -> str:
     if "error" in t:
-        sug = "\n".join(f"  {s['route']}" for s in t.get("suggestions", []))
+        sug = "\n".join(f"  {s['route']}" + (f"  (from {s['from']})" if s.get("from") else "") for s in t.get("suggestions", []))
         return t["error"] + (("; pick one:\n" if t.get("ambiguous") else "\nDid you mean:\n") + sug if sug else "")
     lines = [f"{t['route']}" + (f"  ({t['title']})" if t["title"] else ""), *([f"  ({t['matched']})"] if t.get("matched") else []),
              f"  handler {t['handler']}  in {t['service'] or '?'}"]
+    if t.get("calledFrom"):
+        more = len(t["calledFrom"]) - 3
+        lines.append("  called from: " + ", ".join(t["calledFrom"][:3]) + (f" and {more} more" if more > 0 else ""))
     for e in t["entry"]:
         lines.append(f"  entry: {e['lb']} when {e['when']} -> {e['target']}")
     lines.append(f"  runs on: {_computes(t['compute'])}")
@@ -62,7 +65,7 @@ def trace_text(t: dict) -> str:
             cond = {"conditional": f"  [only if {s['when']}]" if s["when"] else "  [conditional]", "on error": "  [on error]"}.get(s["runs"], "")
             lines.append(f"  {'  ' * s['depth']}{s['label']:<34} {s['at']}{cond}")
     else:
-        lines.append("  no code path traced (call sequences are traced for Python handlers)")
+        lines.append("  no code path traced (call sequences are traced for Python, Java, Kotlin and C# handlers)")
     if t["database"]:
         lines += ["", f"  database: {t['database']}"]
     for x in t["queues"]:

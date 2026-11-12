@@ -328,3 +328,37 @@ def test_live_mode_missing_queue_wording_is_unchanged(tmp_path: Path) -> None:
     assert f["title"] == "Code references queue shop-ghost.fifo, which is not in AWS"
     assert f["detail"] == "Messages sent to it fail, or it lives in another account or region." and f["severity"] == "warn"
     assert any("shop-ghost" in " ".join(a) for a in drift.actions(rep))
+
+
+def _client_code(matched_too: bool = True) -> dict:
+    calls = [[1, 7, "GET", "/api/gift-cards", None], [2, 9, "GET", "/api/gift-cards", None], [1, 3, "POST", "/api/roasts/{id}/start", None]]
+    if matched_too:
+        calls.append([1, 2, "GET", "/api/roasts", 0])
+    return {"base": "/nonexistent", "services": ["roaster", "storefront"],
+            "files": [{"p": "roaster/A.java"}, {"p": "storefront/src/api.ts"}, {"p": "storefront/src/Cart.tsx"}],
+            "routes": [{"m": "GET", "p": "/api/roasts", "f": 0, "l": 1}], "clientCalls": calls}
+
+
+def test_frontend_calls_with_no_route_are_drift() -> None:
+    rep = drift.report(_client_code(), {"placement": {}, "queues": {}}, None, {"sources": []})
+    got = by_kind(rep)["client_unmatched"]
+    gift = next(f for f in got if "gift-cards" in f["title"])
+    assert gift["title"] == "Frontend calls GET /api/gift-cards, which no backend route serves"
+    assert gift["evidence"][:2] == ["code: storefront/src/api.ts:7", "code: storefront/src/Cart.tsx:9"]
+    assert gift["confidence"] == "high" and gift["count"] == 2
+    assert "frontend calls with no route: 2" in rep["summary"]
+    assert any("frontend call" in a[1] for a in drift.actions(rep))
+    assert "frontend calls against backend routes" in rep["checked"]
+
+
+def test_unmatched_calls_are_uncertain_when_no_call_matches() -> None:
+    rep = drift.report(_client_code(matched_too=False), {"placement": {}, "queues": {}}, None, {"sources": []})
+    assert "client_unmatched" not in by_kind(rep)
+    assert {u["code"] for u in rep["uncertain"]} == {"GET /api/gift-cards", "POST /api/roasts/{id}/start"}
+
+
+def test_suffix_matched_calls_are_not_drift() -> None:
+    code = _client_code()
+    code["clientCalls"] = [[1, 2, "GET", "/roasts", 0, "suffix"]]
+    rep = drift.report(code, {"placement": {}, "queues": {}}, None, {"sources": []})
+    assert "client_unmatched" not in by_kind(rep)

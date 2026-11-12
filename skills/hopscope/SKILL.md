@@ -71,8 +71,10 @@ permission are skipped with a warning rather than failing the run — mention an
 
 If a repo already contains a floorplan map (`floorplan/graph.json`), the code map uses its
 human-readable names; otherwise the built-in scanner handles Python (FastAPI, Flask), JavaScript and
-TypeScript (Express, NestJS) and Go. Call-sequence tracing is Python-only today; other languages still
-get routes, imports and the infrastructure path.
+TypeScript (Express, NestJS), Go, Java and Kotlin (Spring, Micronaut, JAX-RS, Ktor) and C# (ASP.NET Core
+controllers and minimal APIs). Call sequences are traced for Python, Java, Kotlin and C# handlers; Go and
+JavaScript still get routes, imports and the infrastructure path. HTTP calls in JS/TS frontends are matched to
+the backend routes they reach (`clientCalls` in code.json).
 
 ### 4. Review the links — this is the step that makes it trustworthy
 
@@ -123,7 +125,8 @@ re-reading the code or the account.
   `<project>/.hopscope/data` (or `site/`). Use `impact` before changing a file ("what breaks if I change
   `app/identity.py`?": dependent files, the routes whose handler or code path reaches it, the services they
   run on, and the queues and workers downstream), `trace` for "what does POST /orders touch?",
-  `find_routes` to get the exact route name first, `who_calls` for callers of a file or function,
+  `find_routes` to get the exact route name first (or pass `trace` a frontend file or `file:line` to start
+  from the button that makes the call; its `calledFrom` lists the frontend files that call a route), `who_calls` for callers of a file or function,
   `what_runs` for the compute, queues and database behind a code folder, `resources` for the inventory,
   `health` for one resource's status and the actions that mention it, `changes` for "what changed since
   the last build / before the outage?" (each change, earlier builds, recent ECS deploys and revisions), and
@@ -139,7 +142,7 @@ re-reading the code or the account.
   `--format drawio --out arch.drawio` (architecture with AWS icons, opens in draw.io). Exports describe
   the real system, so treat them like the console: don't publish one from a real account.
 
-The answers are as good as the build: call sequences are traced for Python handlers only, and a route's
+The answers are as good as the build: call sequences are traced for Python, Java, Kotlin and C# handlers, and a route's
 compute comes from the reviewed links. A compute marked unconfirmed (`{"name", "confidence", "unconfirmed": true}`
 in a tool result, "unconfirmed link, 0.5" in text) is a low-confidence guess: tell the user it is unconfirmed, never
 state it as fact, and offer `hopscope.py review`. In design mode there are no live numbers.

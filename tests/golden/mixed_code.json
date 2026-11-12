@@ -1,0 +1,392 @@
+{
+ "base": "<base>",
+ "clientCalls": [],
+ "files": [
+  {
+   "d": "",
+   "loc": 1,
+   "m": "api::app",
+   "p": "api/app/__init__.py",
+   "t": "Init",
+   "x": []
+  },
+  {
+   "d": "",
+   "loc": 2,
+   "m": "api::app",
+   "p": "api/app/broken.py",
+   "t": "Broken",
+   "x": []
+  },
+  {
+   "d": "",
+   "loc": 3,
+   "m": "api::app",
+   "p": "api/app/db.py",
+   "t": "Db",
+   "x": [
+    "postgres"
+   ]
+  },
+  {
+   "d": "",
+   "loc": 7,
+   "m": "api::app",
+   "p": "api/app/main.py",
+   "t": "Main",
+   "x": []
+  },
+  {
+   "d": "",
+   "loc": 1,
+   "m": "api::app",
+   "p": "api/app/routes/__init__.py",
+   "t": "Init",
+   "x": []
+  },
+  {
+   "d": "",
+   "loc": 8,
+   "m": "api::app",
+   "p": "api/app/routes/beans.py",
+   "t": "Beans",
+   "x": [
+    "cache"
+   ]
+  },
+  {
+   "d": "",
+   "loc": 18,
+   "m": "api::app",
+   "p": "api/app/routes/orders.py",
+   "t": "Orders",
+   "x": [
+    "sqs"
+   ]
+  },
+  {
+   "d": "",
+   "loc": 1,
+   "m": "api::app",
+   "p": "api/app/web/__init__.py",
+   "t": "Init",
+   "x": []
+  },
+  {
+   "d": "",
+   "loc": 8,
+   "m": "api::app",
+   "p": "api/app/web/pages.py",
+   "t": "Pages",
+   "x": [
+    "llm"
+   ]
+  },
+  {
+   "d": "",
+   "loc": 8,
+   "m": "go::(root)",
+   "p": "go/main.go",
+   "t": "Main",
+   "x": [
+    "postgres"
+   ]
+  },
+  {
+   "d": "",
+   "loc": 2,
+   "m": "web::src",
+   "p": "web/src/lazy/index.ts",
+   "t": "Index",
+   "x": []
+  },
+  {
+   "d": "",
+   "loc": 2,
+   "m": "web::src",
+   "p": "web/src/lib/price.ts",
+   "t": "Price",
+   "x": []
+  },
+  {
+   "d": "",
+   "loc": 9,
+   "m": "web::src",
+   "p": "web/src/orders.controller.ts",
+   "t": "Orders controller",
+   "x": [
+    "s3"
+   ]
+  },
+  {
+   "d": "",
+   "loc": 9,
+   "m": "web::src",
+   "p": "web/src/server.ts",
+   "t": "Server",
+   "x": [
+    "postgres"
+   ]
+  },
+  {
+   "d": "",
+   "loc": 2,
+   "m": "web::src",
+   "p": "web/src/util.js",
+   "t": "Util",
+   "x": []
+  }
+ ],
+ "flows": [],
+ "links": [
+  [
+   3,
+   4,
+   0,
+   ""
+  ],
+  [
+   3,
+   5,
+   0,
+   ""
+  ],
+  [
+   3,
+   6,
+   0,
+   ""
+  ],
+  [
+   3,
+   7,
+   0,
+   ""
+  ],
+  [
+   3,
+   8,
+   0,
+   ""
+  ],
+  [
+   6,
+   2,
+   0,
+   ""
+  ],
+  [
+   13,
+   10,
+   0,
+   ""
+  ],
+  [
+   13,
+   11,
+   0,
+   ""
+  ],
+  [
+   13,
+   14,
+   0,
+   ""
+  ]
+ ],
+ "moduleLinks": [],
+ "modules": [
+  {
+   "files": 9,
+   "id": "api",
+   "kind": "service",
+   "label": "Api",
+   "loc": 49,
+   "parent": null,
+   "paths": [
+    "api/**"
+   ],
+   "summary": ""
+  },
+  {
+   "files": 9,
+   "id": "api::app",
+   "kind": "module",
+   "label": "App",
+   "loc": 49,
+   "parent": "api",
+   "paths": [
+    "api/app/**"
+   ],
+   "summary": ""
+  },
+  {
+   "files": 1,
+   "id": "go",
+   "kind": "service",
+   "label": "Go",
+   "loc": 8,
+   "parent": null,
+   "paths": [
+    "go/**"
+   ],
+   "summary": ""
+  },
+  {
+   "files": 1,
+   "id": "go::(root)",
+   "kind": "module",
+   "label": "Entry points",
+   "loc": 8,
+   "parent": "go",
+   "paths": [
+    "go/(root)/**"
+   ],
+   "summary": ""
+  },
+  {
+   "files": 5,
+   "id": "web",
+   "kind": "service",
+   "label": "Web",
+   "loc": 24,
+   "parent": null,
+   "paths": [
+    "web/**"
+   ],
+   "summary": ""
+  },
+  {
+   "files": 5,
+   "id": "web::src",
+   "kind": "module",
+   "label": "Src",
+   "loc": 24,
+   "parent": "web",
+   "paths": [
+    "web/src/**"
+   ],
+   "summary": ""
+  }
+ ],
+ "routes": [
+  {
+   "d": "",
+   "f": 5,
+   "l": 6,
+   "m": "GET",
+   "p": "/beans/v2",
+   "t": "List beans"
+  },
+  {
+   "d": "Look up one order.",
+   "f": 6,
+   "l": 7,
+   "m": "GET",
+   "p": "/orders/{order_id}",
+   "t": "Get order"
+  },
+  {
+   "d": "",
+   "f": 6,
+   "l": 12,
+   "m": "POST",
+   "p": "/orders/bulk",
+   "t": "Bulk orders"
+  },
+  {
+   "d": "",
+   "f": 6,
+   "l": 12,
+   "m": "PUT",
+   "p": "/orders/bulk",
+   "t": "Bulk orders"
+  },
+  {
+   "d": "",
+   "f": 6,
+   "l": 16,
+   "m": "WS",
+   "p": "/orders/live",
+   "t": "Live"
+  },
+  {
+   "d": "",
+   "f": 8,
+   "l": 6,
+   "m": "GET",
+   "p": "/about",
+   "t": "About"
+  },
+  {
+   "d": "",
+   "f": 8,
+   "l": 6,
+   "m": "HEAD",
+   "p": "/about",
+   "t": "About"
+  },
+  {
+   "d": "",
+   "f": 9,
+   "l": 4,
+   "m": "GET",
+   "p": "/roasts",
+   "t": ""
+  },
+  {
+   "d": "",
+   "f": 9,
+   "l": 5,
+   "m": "ANY",
+   "p": "/healthz",
+   "t": ""
+  },
+  {
+   "d": "",
+   "f": 12,
+   "l": 4,
+   "m": "GET",
+   "p": "/orders/:id",
+   "t": "Find one"
+  },
+  {
+   "d": "",
+   "f": 12,
+   "l": 6,
+   "m": "POST",
+   "p": "/orders",
+   "t": "Create"
+  },
+  {
+   "d": "",
+   "f": 13,
+   "l": 6,
+   "m": "GET",
+   "p": "/health",
+   "t": ""
+  },
+  {
+   "d": "",
+   "f": 13,
+   "l": 7,
+   "m": "POST",
+   "p": "/cart",
+   "t": ""
+  },
+  {
+   "d": "",
+   "f": 13,
+   "l": 8,
+   "m": "ANY",
+   "p": "/any",
+   "t": ""
+  }
+ ],
+ "services": [
+  "api",
+  "go",
+  "web"
+ ],
+ "source": "built-in scanner"
+}

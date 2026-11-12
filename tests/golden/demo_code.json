@@ -1,0 +1,619 @@
+{
+ "base": "<base>",
+ "clientCalls": [],
+ "files": [
+  {
+   "d": "",
+   "loc": 9,
+   "m": "admin::(root)",
+   "p": "admin/server.js",
+   "t": "Server",
+   "x": []
+  },
+  {
+   "d": "",
+   "loc": 25,
+   "m": "notify-worker::(root)",
+   "p": "notify-worker/worker.py",
+   "t": "Worker",
+   "x": [
+    "ses",
+    "sqs"
+   ]
+  },
+  {
+   "d": "",
+   "loc": 33,
+   "m": "order-worker::(root)",
+   "p": "order-worker/worker.py",
+   "t": "Worker",
+   "x": [
+    "postgres",
+    "s3",
+    "sqs"
+   ]
+  },
+  {
+   "d": "",
+   "loc": 18,
+   "m": "roast-planner::(root)",
+   "p": "roast-planner/plan.py",
+   "t": "Plan",
+   "x": [
+    "postgres",
+    "s3"
+   ]
+  },
+  {
+   "d": "",
+   "loc": 1,
+   "m": "shop-api::app",
+   "p": "shop-api/app/__init__.py",
+   "t": "Init",
+   "x": []
+  },
+  {
+   "d": "",
+   "loc": 15,
+   "m": "shop-api::app",
+   "p": "shop-api/app/cache.py",
+   "t": "Cache",
+   "x": [
+    "cache"
+   ]
+  },
+  {
+   "d": "",
+   "loc": 17,
+   "m": "shop-api::app",
+   "p": "shop-api/app/db.py",
+   "t": "Db",
+   "x": [
+    "postgres"
+   ]
+  },
+  {
+   "d": "",
+   "loc": 14,
+   "m": "shop-api::app",
+   "p": "shop-api/app/identity.py",
+   "t": "Identity",
+   "x": [
+    "cognito"
+   ]
+  },
+  {
+   "d": "",
+   "loc": 13,
+   "m": "shop-api::app",
+   "p": "shop-api/app/main.py",
+   "t": "Main",
+   "x": []
+  },
+  {
+   "d": "",
+   "loc": 10,
+   "m": "shop-api::app",
+   "p": "shop-api/app/payments.py",
+   "t": "Payments",
+   "x": []
+  },
+  {
+   "d": "",
+   "loc": 11,
+   "m": "shop-api::app",
+   "p": "shop-api/app/queue.py",
+   "t": "Queue",
+   "x": [
+    "sqs"
+   ]
+  },
+  {
+   "d": "",
+   "loc": 1,
+   "m": "shop-api::app",
+   "p": "shop-api/app/routes/__init__.py",
+   "t": "Init",
+   "x": []
+  },
+  {
+   "d": "",
+   "loc": 30,
+   "m": "shop-api::app",
+   "p": "shop-api/app/routes/account.py",
+   "t": "Account",
+   "x": []
+  },
+  {
+   "d": "",
+   "loc": 30,
+   "m": "shop-api::app",
+   "p": "shop-api/app/routes/cart.py",
+   "t": "Cart",
+   "x": []
+  },
+  {
+   "d": "",
+   "loc": 17,
+   "m": "shop-api::app",
+   "p": "shop-api/app/routes/catalog.py",
+   "t": "Catalog",
+   "x": []
+  },
+  {
+   "d": "",
+   "loc": 13,
+   "m": "shop-api::app",
+   "p": "shop-api/app/routes/orders.py",
+   "t": "Orders",
+   "x": []
+  },
+  {
+   "d": "",
+   "loc": 19,
+   "m": "shop-api::app",
+   "p": "shop-api/app/routes/subscriptions.py",
+   "t": "Subscriptions",
+   "x": []
+  },
+  {
+   "d": "",
+   "loc": 15,
+   "m": "shop-api::app",
+   "p": "shop-api/app/routes/webhooks.py",
+   "t": "Webhooks",
+   "x": []
+  },
+  {
+   "d": "",
+   "loc": 5,
+   "m": "storefront::(root)",
+   "p": "storefront/render.js",
+   "t": "Render",
+   "x": []
+  },
+  {
+   "d": "",
+   "loc": 9,
+   "m": "storefront::(root)",
+   "p": "storefront/server.js",
+   "t": "Server",
+   "x": []
+  }
+ ],
+ "flows": [],
+ "links": [
+  [
+   8,
+   11,
+   0,
+   ""
+  ],
+  [
+   8,
+   12,
+   0,
+   ""
+  ],
+  [
+   8,
+   13,
+   0,
+   ""
+  ],
+  [
+   8,
+   14,
+   0,
+   ""
+  ],
+  [
+   8,
+   15,
+   0,
+   ""
+  ],
+  [
+   8,
+   16,
+   0,
+   ""
+  ],
+  [
+   8,
+   17,
+   0,
+   ""
+  ],
+  [
+   12,
+   4,
+   0,
+   ""
+  ],
+  [
+   12,
+   6,
+   0,
+   ""
+  ],
+  [
+   12,
+   7,
+   0,
+   ""
+  ],
+  [
+   13,
+   4,
+   0,
+   ""
+  ],
+  [
+   13,
+   5,
+   0,
+   ""
+  ],
+  [
+   13,
+   6,
+   0,
+   ""
+  ],
+  [
+   13,
+   9,
+   0,
+   ""
+  ],
+  [
+   13,
+   10,
+   0,
+   ""
+  ],
+  [
+   14,
+   4,
+   0,
+   ""
+  ],
+  [
+   14,
+   5,
+   0,
+   ""
+  ],
+  [
+   14,
+   6,
+   0,
+   ""
+  ],
+  [
+   15,
+   4,
+   0,
+   ""
+  ],
+  [
+   15,
+   5,
+   0,
+   ""
+  ],
+  [
+   15,
+   6,
+   0,
+   ""
+  ],
+  [
+   16,
+   4,
+   0,
+   ""
+  ],
+  [
+   16,
+   6,
+   0,
+   ""
+  ],
+  [
+   17,
+   4,
+   0,
+   ""
+  ],
+  [
+   17,
+   6,
+   0,
+   ""
+  ],
+  [
+   17,
+   10,
+   0,
+   ""
+  ],
+  [
+   19,
+   18,
+   0,
+   ""
+  ]
+ ],
+ "moduleLinks": [],
+ "modules": [
+  {
+   "files": 1,
+   "id": "admin",
+   "kind": "service",
+   "label": "Admin",
+   "loc": 9,
+   "parent": null,
+   "paths": [
+    "admin/**"
+   ],
+   "summary": ""
+  },
+  {
+   "files": 1,
+   "id": "admin::(root)",
+   "kind": "module",
+   "label": "Entry points",
+   "loc": 9,
+   "parent": "admin",
+   "paths": [
+    "admin/(root)/**"
+   ],
+   "summary": ""
+  },
+  {
+   "files": 1,
+   "id": "notify-worker",
+   "kind": "service",
+   "label": "Notify worker",
+   "loc": 25,
+   "parent": null,
+   "paths": [
+    "notify-worker/**"
+   ],
+   "summary": ""
+  },
+  {
+   "files": 1,
+   "id": "notify-worker::(root)",
+   "kind": "module",
+   "label": "Entry points",
+   "loc": 25,
+   "parent": "notify-worker",
+   "paths": [
+    "notify-worker/(root)/**"
+   ],
+   "summary": ""
+  },
+  {
+   "files": 1,
+   "id": "order-worker",
+   "kind": "service",
+   "label": "Order worker",
+   "loc": 33,
+   "parent": null,
+   "paths": [
+    "order-worker/**"
+   ],
+   "summary": ""
+  },
+  {
+   "files": 1,
+   "id": "order-worker::(root)",
+   "kind": "module",
+   "label": "Entry points",
+   "loc": 33,
+   "parent": "order-worker",
+   "paths": [
+    "order-worker/(root)/**"
+   ],
+   "summary": ""
+  },
+  {
+   "files": 1,
+   "id": "roast-planner",
+   "kind": "service",
+   "label": "Roast planner",
+   "loc": 18,
+   "parent": null,
+   "paths": [
+    "roast-planner/**"
+   ],
+   "summary": ""
+  },
+  {
+   "files": 1,
+   "id": "roast-planner::(root)",
+   "kind": "module",
+   "label": "Entry points",
+   "loc": 18,
+   "parent": "roast-planner",
+   "paths": [
+    "roast-planner/(root)/**"
+   ],
+   "summary": ""
+  },
+  {
+   "files": 14,
+   "id": "shop-api",
+   "kind": "service",
+   "label": "Shop api",
+   "loc": 206,
+   "parent": null,
+   "paths": [
+    "shop-api/**"
+   ],
+   "summary": ""
+  },
+  {
+   "files": 14,
+   "id": "shop-api::app",
+   "kind": "module",
+   "label": "App",
+   "loc": 206,
+   "parent": "shop-api",
+   "paths": [
+    "shop-api/app/**"
+   ],
+   "summary": ""
+  },
+  {
+   "files": 2,
+   "id": "storefront",
+   "kind": "service",
+   "label": "Storefront",
+   "loc": 14,
+   "parent": null,
+   "paths": [
+    "storefront/**"
+   ],
+   "summary": ""
+  },
+  {
+   "files": 2,
+   "id": "storefront::(root)",
+   "kind": "module",
+   "label": "Entry points",
+   "loc": 14,
+   "parent": "storefront",
+   "paths": [
+    "storefront/(root)/**"
+   ],
+   "summary": ""
+  }
+ ],
+ "routes": [
+  {
+   "d": "",
+   "f": 0,
+   "l": 6,
+   "m": "GET",
+   "p": "/orders",
+   "t": ""
+  },
+  {
+   "d": "",
+   "f": 0,
+   "l": 7,
+   "m": "POST",
+   "p": "/beans/:id/stock",
+   "t": ""
+  },
+  {
+   "d": "",
+   "f": 8,
+   "l": 11,
+   "m": "GET",
+   "p": "/health",
+   "t": "Health"
+  },
+  {
+   "d": "",
+   "f": 12,
+   "l": 18,
+   "m": "POST",
+   "p": "/account/sign-in",
+   "t": "Sign in"
+  },
+  {
+   "d": "",
+   "f": 12,
+   "l": 26,
+   "m": "POST",
+   "p": "/account/sign-up",
+   "t": "Sign up"
+  },
+  {
+   "d": "",
+   "f": 13,
+   "l": 21,
+   "m": "POST",
+   "p": "/cart/checkout",
+   "t": "Checkout"
+  },
+  {
+   "d": "",
+   "f": 14,
+   "l": 10,
+   "m": "GET",
+   "p": "/catalog/beans",
+   "t": "List beans"
+  },
+  {
+   "d": "",
+   "f": 15,
+   "l": 10,
+   "m": "GET",
+   "p": "/orders/{order_id}",
+   "t": "Get order"
+  },
+  {
+   "d": "",
+   "f": 16,
+   "l": 9,
+   "m": "POST",
+   "p": "/subscriptions",
+   "t": "Start subscription"
+  },
+  {
+   "d": "",
+   "f": 16,
+   "l": 16,
+   "m": "POST",
+   "p": "/subscriptions/{sub_id}/skip",
+   "t": "Skip delivery"
+  },
+  {
+   "d": "",
+   "f": 17,
+   "l": 10,
+   "m": "POST",
+   "p": "/webhooks/payments",
+   "t": "Payment event"
+  },
+  {
+   "d": "",
+   "f": 19,
+   "l": 5,
+   "m": "GET",
+   "p": "/",
+   "t": ""
+  },
+  {
+   "d": "",
+   "f": 19,
+   "l": 6,
+   "m": "GET",
+   "p": "/beans/:slug",
+   "t": ""
+  },
+  {
+   "d": "",
+   "f": 19,
+   "l": 7,
+   "m": "GET",
+   "p": "/subscribe",
+   "t": ""
+  }
+ ],
+ "services": [
+  "admin",
+  "notify-worker",
+  "order-worker",
+  "roast-planner",
+  "shop-api",
+  "storefront"
+ ],
+ "source": "built-in scanner"
+}

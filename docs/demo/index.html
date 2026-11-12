@@ -332,7 +332,7 @@ td .rp { font-size: 11px }
   <section class="view" id="v-trace" hidden>
     <div class="panel">
       <div class="trace-head">
-        <div style="display:grid;gap:6px;min-width:0"><span class="label">Execution trace</span><h2 id="trace-title">Ask for any API or flow</h2><span class="hint" id="trace-sub">Type in the bar above, or pick an example.</span></div>
+        <div style="display:grid;gap:6px;min-width:0"><span class="label">Execution trace</span><h2 id="trace-title">Ask for any API or flow</h2><span class="hint" id="trace-sub">Type in the bar above, or pick an example.</span><span class="hint mono" id="trace-from" hidden></span></div>
         <div class="examples" id="examples"></div>
       </div>
       <div class="cands" id="cands" style="margin-top:14px"></div>
@@ -397,6 +397,7 @@ const EXTERNAL = {
   s3: { n: 'Amazon S3', r: 'buckets', c: 'cloud' }, aws: { n: 'AWS SDK', r: 'other AWS calls', c: 'cloud' }, cache: { n: 'Cache', r: 'ElastiCache', c: 'data' },
   search: { n: 'OpenSearch', r: 'search cluster', c: 'data' }, llm: { n: 'AI model API', r: 'model provider', c: 'cloud' },
   tracing: { n: 'Monitoring', r: 'traces and errors', c: 'cloud' }, chatapps: { n: 'Chat apps', r: 'external SaaS', c: 'cloud' },
+  mssql: { n: 'SQL Server', r: 'database', c: 'data' }, kafka: { n: 'Kafka', r: 'event stream', c: 'data' }, http: { n: 'HTTP APIs', r: 'other services', c: 'cloud' },
 };
 let A = null; // AWS component inventory (aws.json)
 function edgeFor(name) {
@@ -547,6 +548,14 @@ function traceRoute(ri) {
   return { ri, r, root, compute, edge, queues, place: PLACEMENT[root], localFiles, touch, ext: externals(localFiles), downstream: Object.values(downstream) };
 }
 
+// ---------- frontend calls (code.json clientCalls: [file, line, method, path, route]) ----------
+const callersOf = (ri) => (D.clientCalls || []).filter((c) => c[4] === ri).map((c) => `${D.files[c[0]]?.p || '?'}:${c[1]}`);
+function clientRoutes(q) { // "Members.tsx" or "src/pages/Members.tsx:42" -> the routes that file (or line) calls
+  const m = q.trim().toLowerCase().match(/^(.*?\.[a-z]{2,4})(?::(\d+))?$/);
+  if (!m || m[1].length < 4) return [];
+  return [...new Set((D.clientCalls || []).filter((c) => c[4] != null && (D.files[c[0]]?.p || '').toLowerCase().endsWith(m[1]) && (!m[2] || c[1] === +m[2])).map((c) => c[4]))];
+}
+
 // ---------- ask ----------
 const STOP = new Set('show me the a an of on in for to how does do what is flow flows execution infra infrastructure api apis trace happens when reach'.split(' '));
 function score(r, terms, pathTerm) {
@@ -559,6 +568,8 @@ function score(r, terms, pathTerm) {
   return s;
 }
 function candidates(q) {
+  const fromFile = clientRoutes(q);
+  if (fromFile.length) return fromFile;
   const ql = q.toLowerCase();
   const pathTerm = (ql.match(/\/[\w\-\/{}.]+/) || [])[0];
   const terms = ql.replace(/\/[\w\-\/{}.]+/g, ' ').split(/[^a-z0-9_-]+/).filter((w) => w.length > 2 && !STOP.has(w));
@@ -722,6 +733,7 @@ function targetNode(kind, label) {
   if (kind === 'queue') return { id: 'sqs', desc: 'Message is queued for a background worker.' };
   if (kind === 'llm') { const gw = INFRA.find((r) => r.kind === 'ecs' && r.env === 'prod' && /llm|model|ai-?gateway/i.test(r.n)); return gw ? { id: 'svc:' + gw.n, desc: 'AI model gateway, which calls the model provider.' } : { id: 'internet', desc: 'Calls an AI model provider over the internet.' }; }
   if (kind === 'aws') { const svc = label.split(':')[0]; return { id: MANAGED[svc] || 'aws:' + svc, desc: `AWS managed service: ${svc}.` }; }
+  if (kind === 'kafka') return { id: 'aws:Kafka', desc: 'Event stream (Kafka).' };
   if (kind === 'http') { const r = resolveHttp(label); return r ? { id: 'svc:' + r.compute, route: r.route, label: r.compute, desc: `Internal call to ${r.compute}.` } : { id: 'internet', desc: 'Outbound call to an external API through the NAT gateway.' }; }
   return { id: 'aws:other', desc: '' };
 }
@@ -743,7 +755,8 @@ function buildSeq(t) {
     add('alb', 'fe', 'sync', `Rule: ${fe.when.replace('host-header=', 'host ')}`, `Forwarded to target group ${fe.tg} on EC2 ${fe.ec2}.`);
     add('fe', 'client', 'ret', `${fe.ec2} serves the page`, 'HTML and scripts load; the user fills in the form and submits.');
   }
-  add('client', t.edge ? 'alb' : 'task', 'sync', `${t.r.m} ${host ? 'https://' + host : ''}${t.r.p}`, [t.r.t, t.r.d].filter(Boolean).join('. '));
+  const callers = callersOf(t.ri);
+  add('client', t.edge ? 'alb' : 'task', 'sync', `${t.r.m} ${host ? 'https://' + host : ''}${t.r.p}`, [t.r.t, t.r.d, callers.length ? `Called from ${callers.slice(0, 2).join(', ')}` : ''].filter(Boolean).join('. '));
   if (t.edge) add('alb', 'task', 'sync', `Rule: ${t.edge.when.replace(/host-header=/g, 'host ').replace(/path-pattern=/g, 'path ')}`, `Forwarded to ECS service ${t.compute[0]}.`);
   add('task', 'task', 'sync', `Handler runs: ${D.files[t.r.f].p.split('/').pop()}:${t.r.l}`, D.files[t.r.f].t, D.files[t.r.f].p + ':' + t.r.l);
   const followed = new Set(), queued = new Set();
@@ -882,6 +895,9 @@ function drawArch(t) {
   $('#steps').innerHTML = S.seq.map((s, i) => `<li class="${s.kind}" data-step="${i}" id="st-${i}"><span class="no">${i + 1}</span><div><b>${esc(s.title)}</b>${s.detail ? `<p>${esc(s.detail)}</p>` : ''}${s.code ? `<p><code>${esc(s.code)}</code></p>` : ''}</div></li>`).join('');
   $('#trace-title').textContent = `${t.r.m} ${t.r.p}`;
   $('#trace-sub').textContent = `${t.r.t} · ${S.seq.length} steps · ${S.seq.filter((s) => s.kind === 'cond').length} conditional · ${S.seq.filter((s) => s.kind === 'async').length} async`;
+  const callers = callersOf(t.ri), from = $('#trace-from');
+  from.hidden = !callers.length;
+  from.innerHTML = callers.length ? `Called from: ${callers.slice(0, 4).map((c) => esc(c)).join(', ')}${callers.length > 4 ? ` and ${esc(String(callers.length - 4))} more` : ''}` : '';
   ARCH = { S, t }; cur = -1; stopPlay(); $('#stepnow').textContent = `Step — of ${S.seq.length}`;
 }
 function focusStep(i, animate = true) {
@@ -1147,7 +1163,7 @@ let ARCH_ENV = 'prod';
 const lvlOfRes = (r) => (r.lvl ? r.lvl : r.kind === 'ecs' && !r.tasks ? 'off' : 'ok');
 const DOT = { ok: 'var(--signal)', warn: 'var(--amber)', bad: 'var(--red)', off: 'var(--line)' };
 const shortHost = (when) => (when.match(/host-header=([^ &]+)/)?.[1] || '').split(',')[0] + (when.match(/path-pattern=([^ &]+)/) ? ' ' + when.match(/path-pattern=([^ &]+)/)[1].split(',')[0] : '');
-const EXT_NODE = { postgres: 'aurora', mysql: 'aurora', mongo: 'aurora', cache: 'valkey', search: 'search', cognito: 'cognito', sqs: 'sqs', ses: 'ses', s3: 's3', llm: 'ext', chatapps: 'chat' };
+const EXT_NODE = { postgres: 'aurora', mysql: 'aurora', mssql: 'aurora', mongo: 'aurora', cache: 'valkey', search: 'search', cognito: 'cognito', sqs: 'sqs', ses: 'ses', s3: 's3', llm: 'ext', chatapps: 'chat' };
 
 function renderAwsArch() {
   if (!A || !M) return;
@@ -1438,7 +1454,8 @@ $('#voice-rate').addEventListener('change', (e) => { VOICE_RATE = +e.target.valu
 // ---------- timeline and drift (changes.json, drift.json, deploys in aws.json) ----------
 let CH = null, DR = null; // what changed since the last build; where code, files and AWS disagree
 const DRIFT_KIND = { aws_not_in_files: 'not in files', files_not_deployed: 'not deployed', desired_differs: 'count differs', image_differs: 'image differs',
-  taskdef_differs: 'task def differs', queue_unreferenced: 'unused queue', queue_missing: 'missing queue', ref_missing: 'broken setting', link_may_be_wrong: 'link may be wrong' };
+  taskdef_differs: 'task def differs', queue_unreferenced: 'unused queue', queue_missing: 'missing queue', ref_missing: 'broken setting', link_may_be_wrong: 'link may be wrong',
+  client_unmatched: 'no route for call' };
 const tick = (t) => new Date(t).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' });
 const when = (t) => new Date(t).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 function driftHtml() {

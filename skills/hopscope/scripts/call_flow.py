@@ -1,4 +1,4 @@
-"""Static call-sequence extraction for each Python API handler.
+"""Static call-sequence extraction for each API handler (Python here; Java, Kotlin and C# in langs/braceflow.py).
 
 For every route in the floorplan, walk the handler body in source order, follow calls into
 functions and methods defined in the same service (up to MAX_DEPTH), and record the calls that
@@ -16,6 +16,8 @@ import re
 import sys
 from functools import lru_cache
 from pathlib import Path
+
+import langs
 
 DATA = json.loads(Path(sys.argv[1]).read_text())
 OUT = Path(sys.argv[2])
@@ -393,6 +395,9 @@ flows = {}
 for i, r in enumerate(DATA["routes"]):
     path = FILES[r["f"]]
     if not path.endswith(".py"):
+        other = langs.flows_for(DATA, ROOT, i)  # Java, Kotlin and C# (langs/braceflow.py)
+        if other is not None:
+            flows[i] = other
         continue
     fn = find_def(path, r["l"], "")
     if not fn:

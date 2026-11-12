@@ -123,3 +123,11 @@ def test_cli_export(tmp_path: Path) -> None:
     p = subprocess.run([sys.executable, str(cli), "export", "--format", "drawio", "--route", "GET /health", "--out", str(tmp_path / "x"), "--workdir", str(work)],
                        capture_output=True, text=True, timeout=60)
     assert p.returncode != 0
+
+
+def test_sql_server_code_draws_the_database_edge(data: dict) -> None:
+    d = json.loads(json.dumps(data))
+    for f in d["code"]["files"]:
+        f["x"] = ["mssql" if x == "postgres" else x for x in f["x"]]
+    ids = {n["id"]: n["label"] for n in ex.architecture(d)["nodes"]}
+    assert ("shop-api", "kestrel-db") in {(ids[e["from"]], ids[e["to"]]) for e in ex.architecture(d)["edges"]}

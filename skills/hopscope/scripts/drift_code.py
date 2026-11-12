@@ -177,3 +177,39 @@ def check(code: dict, links: dict, target: dict, where: str, files: list[tuple[s
             if missing:
                 findings.append(missing_ref(n.key("ecs", x), r, missing, where, files, design))
     return findings, uncertain
+
+
+CLIENT_DETAIL = ("The frontend sends a request no mapped route answers: a path or method that changed on one side, a route the scanner "
+                 "can't read, or a backend outside these repos.")
+
+
+MAX_CALL_FINDINGS = 50
+
+
+def unmatched_calls(code: dict) -> tuple[list[dict], list[dict]]:
+    """Frontend HTTP calls (code.json clientCalls) that match no backend route, one per method and path, as
+    (findings, uncertain). They are findings only when the scan has backend routes and at least one call matched a
+    route; otherwise the backend is probably not among the scanned repos and they are listed as uncertain. At most 50
+    findings, then one row counting the rest."""
+    files = [str(f.get("p", "")) if isinstance(f, dict) else "" for f in code.get("files", [])]
+    rows = [c for c in code.get("clientCalls") or [] if isinstance(c, list) and len(c) in (5, 6) and isinstance(c[0], int) and 0 <= c[0] < len(files)]
+    groups: dict[str, list[str]] = {}
+    for c in rows:
+        if c[4] is None:
+            groups.setdefault(f"{str(c[2])[:10]} {str(c[3])[:200]}", []).append(f"{files[c[0]]}:{c[1]}")
+    n_routes = len(code.get("routes") or [])
+    if not n_routes or not any(c[4] is not None for c in rows):
+        why = "no backend routes were scanned" if not n_routes else "none of the frontend calls matched a route"
+        return [], [{"kind": "route", "code": call, "target": "no route", "why": f"frontend calls {call} ({places[0]}); {why}"}
+                    for call, places in sorted(groups.items())]
+    out = []
+    for call, places in sorted(groups.items())[:MAX_CALL_FINDINGS]:
+        evidence = [f"code: {p}" for p in places[:4]] + [f"routes: none of {n_routes} mapped routes serves it"]
+        out.append(n.finding("client_unmatched", f"Frontend calls {call}, which no backend route serves", CLIENT_DETAIL, evidence, call, "route",
+                             names=places))
+    rest = sorted(groups.items())[MAX_CALL_FINDINGS:]
+    if rest:
+        names = [call for call, _ in rest]
+        out.append(n.finding("client_unmatched", f"{len(rest)} more frontend calls no backend route serves", CLIENT_DETAIL,
+                             [f"call: {c}" for c in names[:6]], f"{len(rest)} more calls", "route", names=names))
+    return out, []

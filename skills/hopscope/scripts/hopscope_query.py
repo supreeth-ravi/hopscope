@@ -16,6 +16,8 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
+import hopscope_callers as callers
+
 MAX_STR, MAX_ITEMS, MAX_DEPTH = 300, 50, 6
 RUNS = {0: "always", 1: "conditional", 2: "on error"}
 LINK_KINDS = {0: "import", 1: "http", 2: "queue"}
@@ -140,6 +142,9 @@ def compute_name(c: Any) -> str:
 
 def _any_unconfirmed(items: list[Any]) -> bool:
     return any(isinstance(c, dict) and c.get("unconfirmed") for c in items)
+
+
+TRACED = (".py", ".java", ".kt", ".cs")  # languages whose handlers get a call sequence
 
 
 def _route_name(r: dict) -> str:
@@ -298,6 +303,11 @@ def trace(data: dict, route: str | int) -> dict:
     A free-text query ('checkout') follows the clearly best matching route, else lists the close candidates."""
     idx = _route_index(data, route)
     matched = ""
+    if idx is None:  # a frontend file or file:line: the route it calls
+        idx, many, err = callers.route_for_file(data, str(route))
+        if err or many:
+            return {"error": err or f"{clip(route)} calls {len(many)} routes", "suggestions": many, "ambiguous": bool(many)}
+        matched = f"called from {clip(route)}" if idx is not None else ""
     if idx is None:
         idx, found = _best_free_text(data, str(route))
         if idx is None:
@@ -316,9 +326,10 @@ def trace(data: dict, route: str | int) -> dict:
                   "when": clip(s[6] if len(s) > 6 else ""), "why": clip(s[7] if len(s) > 7 else "")} for s in steps[:MAX_ITEMS]]
     return {"route": _route_name(r), "title": clip(r.get("t")), "handler": _at(data, r.get("f"), r.get("l")), "service": service,
             "compute": shown, "entry": _entry(data, compute), "steps": out_steps,
-            "traced": bool(steps) or handler_path.endswith(".py"),
+            "traced": bool(steps) or handler_path.endswith(TRACED),
             "queues": _queues_reached(data, service, steps), "database": _database(data, service, steps),
-            "reaches": sorted({clip(s[1]) for s in steps if len(s) > 1 and s[1] != "call"}), **({"matched": matched} if matched else {}),
+            "reaches": sorted({clip(s[1]) for s in steps if len(s) > 1 and s[1] != "call"}), "calledFrom": callers.called_from(data, idx),
+            **({"matched": matched} if matched else {}),
             **({"note": UNCONFIRMED_NOTE} if _any_unconfirmed(shown) else {})}
 
 

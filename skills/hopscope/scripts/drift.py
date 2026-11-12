@@ -26,10 +26,11 @@ from iac_common import mask_numbers
 match = n.match  # kept as drift.match for callers and tests
 KINDS = n.KINDS
 ORDER = ("link_may_be_wrong", "image_differs", "desired_differs", "taskdef_differs", "ref_missing", "queue_missing", "files_not_deployed",
-         "aws_not_in_files", "queue_unreferenced")
+         "aws_not_in_files", "queue_unreferenced", "client_unmatched")
 LABEL = {"link_may_be_wrong": "links may be wrong", "image_differs": "images differ", "desired_differs": "desired counts differ",
          "taskdef_differs": "task definitions differ", "ref_missing": "broken settings", "queue_missing": "missing queues",
          "files_not_deployed": "not deployed", "aws_not_in_files": "in AWS but in no file", "queue_unreferenced": "queues no code references",
+         "client_unmatched": "frontend calls with no route",
          "ref_elsewhere": "settings naming resources defined elsewhere", "queue_elsewhere": "queues the code names, defined elsewhere"}
 GROUPED = ("aws_not_in_files", "queue_unreferenced")
 DIFFERENCES = ("link_may_be_wrong", "image_differs", "desired_differs", "taskdef_differs", "files_not_deployed")
@@ -207,6 +208,11 @@ def report(code: dict, links: dict, live: dict | None, files: dict | None, simil
     findings += f
     uncertain += u
     checked.append(f"code against {where}")
+    if code.get("clientCalls"):
+        f, u = drift_code.unmatched_calls(code)
+        findings += f
+        uncertain += u
+        checked.append("frontend calls against backend routes")
     if live is None:
         skipped.append("AWS checks: design mode reads no AWS account")
         for x in (files or {}).get("ecs") or []:
@@ -241,6 +247,10 @@ def actions(rep: dict) -> list[list]:
     if unref:
         out.append(["warn", f"Queues no code references: {n.describe(unref)}", "; ".join(", ".join(f["names"]) for f in unref)[:300],
                     "Delete them if nothing outside these repos uses them."])
+    nomatch = of("client_unmatched")
+    if nomatch:
+        out.append(["warn", f"{len(nomatch)} frontend call(s) reach no backend route", "; ".join(f["title"] for f in nomatch)[:300],
+                    "Fix the path in the frontend or add the route; see hopscope.py drift."])
     return out[:3]
 
 

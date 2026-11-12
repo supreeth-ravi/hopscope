@@ -17,7 +17,7 @@ import hopscope_query as q
 
 COLUMNS = ("Entry", "Services", "Data and queues", "Workers and jobs")
 MAX_LABEL = 80
-DB_TAGS = {"postgres", "mysql", "mongo"}
+DB_TAGS = {"postgres", "mysql", "mssql", "mongo"}
 ICON = {  # draw.io AWS library (mxgraph.aws4): resource icon and its category colour
     "lb": ("elastic_load_balancing", "#8C4FFF"), "ecs": ("ecs", "#ED7100"), "ec2": ("ec2", "#ED7100"), "lambda": ("lambda", "#ED7100"),
     "rds": ("rds", "#C925D1"), "cache": ("elasticache", "#C925D1"), "sqs": ("sqs", "#E7157B"), "s3": ("s3", "#7AA116"),

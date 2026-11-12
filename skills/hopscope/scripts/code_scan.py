@@ -9,45 +9,29 @@ names are used; otherwise the built-in scanner reads Python, JavaScript/TypeScri
 from __future__ import annotations
 
 import argparse
-import ast
+import fnmatch
 import json
 import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
+
+import code_clients
+import langs
+from langs.common import humanize, shared_externals
 
 SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "env", "__pycache__", "dist", "build", ".next", "site-packages", ".tox", ".mypy_cache",
              "coverage", "vendor", ".terraform", "migrations", "alembic", "tests", "test", "__tests__", "floorplan"}
-CODE_EXT = {".py": "python", ".js": "js", ".jsx": "js", ".ts": "js", ".tsx": "js", ".mjs": "js", ".go": "go"}
-SERVICE_MARKERS = ("Dockerfile", "pyproject.toml", "requirements.txt", "package.json", "go.mod", "setup.py")
+LANG_BY_EXT = langs.by_suffix()
+CODE_EXT = {ext: lang.NAME for ext, lang in LANG_BY_EXT.items()}
+SERVICE_MARKERS = langs.service_markers()
+BUILD_DIRS = langs.build_dirs()
 MAX_FILE_BYTES = 400_000
 METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "WS", "ANY"}
-
-# External systems, detected from imports and SDK calls. Keys are what the console draws.
-EXTERNAL = {
-    "postgres": r"^\s*(from|import)\s+(sqlalchemy|sqlmodel|asyncpg|psycopg2?|alembic|tortoise|peewee|django\.db)\b|from\s+['\"](pg|postgres|@prisma/client|typeorm|sequelize|knex|drizzle-orm)['\"]|\"github\.com/(lib/pq|jackc/pgx)",
-    "mysql": r"^\s*(from|import)\s+(pymysql|MySQLdb|aiomysql)\b|from\s+['\"]mysql2?['\"]",
-    "mongo": r"^\s*(from|import)\s+(pymongo|motor|beanie|mongoengine)\b|from\s+['\"]mongoose|mongodb['\"]",
-    "cache": r"^\s*(from|import)\s+(redis|aioredis|valkey)\b|from\s+['\"](ioredis|redis)['\"]",
-    "llm": r"^\s*(from|import)\s+(openai|litellm|anthropic)\b|from\s+['\"](openai|@anthropic-ai/sdk)['\"]",
-    "cognito": r"cognito-idp|CognitoIdentityProvider|cognito_idp",
-    "sqs": r"['\"]sqs['\"]|client-sqs|send_message\(|SendMessageCommand",
-    "ses": r"['\"]sesv?2?['\"]|client-ses|send_email\(|SendEmailCommand",
-    "s3": r"['\"]s3['\"]|client-s3|put_object\(|upload_fileobj\(|PutObjectCommand",
-    "search": r"opensearch|elasticsearch",
-    "chatapps": r"slack_sdk|slack_bolt|@slack/|telegram",
-    "tracing": r"opentelemetry|langfuse|@sentry|sentry_sdk|datadog|ddtrace",
-}
-EXT_RX = {k: re.compile(v, re.M | re.I) for k, v in EXTERNAL.items()}
-
-PY_ROUTE = re.compile(r"^(app|router|api|bp|blueprint|\w+_router|\w+_app)$")
-HTTP_METHODS = ("get", "post", "put", "patch", "delete", "head", "options", "websocket", "api_route", "route")
-JS_ROUTE = re.compile(r"\b(?:app|router|server|api|\w+Router)\.(get|post|put|patch|delete|all)\(\s*['\"`]([^'\"`]+)['\"`]")
-NEST_CTRL = re.compile(r"@Controller\(\s*['\"`]?([^'\"`)]*)['\"`]?\s*\)")
-NEST_ROUTE = re.compile(r"@(Get|Post|Put|Patch|Delete)\(\s*['\"`]?([^'\"`)]*)['\"`]?\s*\)\s*\n\s*(?:async\s+)?(\w+)")
-GO_ROUTE = re.compile(r"\.(GET|POST|PUT|PATCH|DELETE|HandleFunc|Handle)\(\s*\"([^\"]+)\"")
-JS_IMPORT = re.compile(r"(?:import[^'\"]*from\s*|require\(\s*|import\(\s*)['\"](\.{1,2}/[^'\"]+)['\"]")
+TEST_NAME = re.compile(r"(\.test|\.spec|_test)\.\w+$|\.d\.ts$|\.min\.js$")
+__all__ = ["humanize", "scan", "from_floorplan", "service_roots", "externals"]
 
 
 @dataclass
@@ -59,19 +43,56 @@ class CodeMap:
     services: list[str] = field(default_factory=list)
     flows: list[dict] = field(default_factory=list)
     module_links: list[dict] = field(default_factory=list)
+    client_calls: list[list] = field(default_factory=list)
 
 
-def humanize(name: str) -> str:
-    words = re.sub(r"([a-z])([A-Z])", r"\1 \2", re.sub(r"[_\-.]+", " ", name)).strip().split()
-    return " ".join(words).capitalize() if words else name
+def _is_test(name: str, lang) -> bool:
+    extra = getattr(lang, "TEST_FILE", None)
+    return bool(TEST_NAME.search(name) or (extra is not None and extra.search(name)))
+
+
+@lru_cache(maxsize=4096)
+def _listing(d: Path) -> frozenset[str]:
+    try:
+        return frozenset(os.listdir(d))
+    except OSError:
+        return frozenset()
+
+
+def has_marker(d: Path, markers: tuple[str, ...] = SERVICE_MARKERS) -> bool:
+    names = _listing(d)
+    for m in markers:
+        if "*" in m:
+            if any(fnmatch.fnmatchcase(n, m) for n in names):
+                return True
+        elif m in names:
+            return True
+    return False
+
+
+def _skip_dir(parent: Path, d: str) -> bool:
+    if d in SKIP_DIRS or d.startswith("."):
+        return True
+    return d in BUILD_DIRS and has_marker(parent, BUILD_DIRS[d])
+
+
+def _inside(p: Path, repo: Path) -> bool:
+    """A file to read: not a symlink that leads out of the repository."""
+    try:
+        return not p.is_symlink() or p.resolve().is_relative_to(repo.resolve())
+    except (OSError, RuntimeError):
+        return False
 
 
 def walk(repo: Path):
     for dirpath, dirnames, filenames in os.walk(repo):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
+        dirnames[:] = [d for d in dirnames if not _skip_dir(Path(dirpath), d)]
         for f in filenames:
             p = Path(dirpath) / f
-            if p.suffix in CODE_EXT and p.stat().st_size < MAX_FILE_BYTES and not re.search(r"(\.test|\.spec|_test)\.\w+$|\.d\.ts$|\.min\.js$", f):
+            lang = LANG_BY_EXT.get(p.suffix)
+            if lang is None or _is_test(f, lang) or not _inside(p, repo):
+                continue
+            if p.stat().st_size < MAX_FILE_BYTES:
                 yield p
 
 
@@ -81,14 +102,13 @@ def service_roots(repo: Path, files: list[Path]) -> list[Path]:
     for f in files:
         d = f.parent
         while True:
-            if any((d / m).exists() for m in SERVICE_MARKERS):
+            if has_marker(d):
                 roots.add(d)
                 break
             if d == repo or d == d.parent:
                 roots.add(repo)
                 break
             d = d.parent
-    # Drop a root that only contains other roots (e.g. a monorepo with a top-level package.json).
     return sorted(roots, key=lambda p: (len(p.parts), str(p)))
 
 
@@ -101,124 +121,9 @@ def owning_root(path: Path, roots: list[Path]) -> Path:
     return best or roots[0]
 
 
-def py_routes(tree: ast.AST, src: str) -> list[dict]:
-    out = []
-    prefixes = {}
-    for node in ast.walk(tree):  # router = APIRouter(prefix="/x")
-        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
-            for kw in node.value.keywords:
-                if kw.arg == "prefix" and isinstance(kw.value, ast.Constant) and isinstance(node.targets[0], ast.Name):
-                    prefixes[node.targets[0].id] = str(kw.value.value)
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for dec in node.decorator_list:
-            if not (isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute) and isinstance(dec.func.value, ast.Name)):
-                continue
-            obj, meth = dec.func.value.id, dec.func.attr.lower()
-            if meth not in HTTP_METHODS or not (PY_ROUTE.match(obj) or obj in prefixes) or not dec.args or not isinstance(dec.args[0], ast.Constant):
-                continue
-            path = prefixes.get(obj, "") + str(dec.args[0].value)
-            methods = [meth.upper()]
-            if meth in ("route", "api_route"):
-                methods = ["GET"]
-                for kw in dec.keywords:
-                    if kw.arg == "methods" and isinstance(kw.value, (ast.List, ast.Tuple)):
-                        methods = [str(e.value).upper() for e in kw.value.elts if isinstance(e, ast.Constant)] or ["GET"]
-            if meth == "websocket":
-                methods = ["WS"]
-            doc = (ast.get_docstring(node) or "").strip().split("\n")[0][:140]
-            for m in methods:
-                out.append({"m": m, "p": path or "/", "t": humanize(node.name), "d": doc, "l": node.lineno})
-    return out
-
-
-def js_routes(src: str) -> list[dict]:
-    out = []
-    def line_of(i: int) -> int:
-        return src.count("\n", 0, i) + 1
-
-    for m in JS_ROUTE.finditer(src):
-        out.append({"m": m.group(1).upper().replace("ALL", "ANY"), "p": m.group(2), "t": "", "d": "", "l": line_of(m.start())})
-    ctrl = NEST_CTRL.search(src)
-    base = "/" + ctrl.group(1).strip("/") if ctrl and ctrl.group(1) else ""
-    for m in NEST_ROUTE.finditer(src):
-        sub = ("/" + m.group(2).strip("/")) if m.group(2) else ""
-        out.append({"m": m.group(1).upper(), "p": (base + sub) or "/", "t": humanize(m.group(3)), "d": "", "l": line_of(m.start())})
-    return out
-
-
-def go_routes(src: str) -> list[dict]:
-    return [{"m": ("ANY" if m.group(1).startswith("Handle") else m.group(1)), "p": m.group(2), "t": "", "d": "", "l": src.count("\n", 0, m.start()) + 1}
-            for m in GO_ROUTE.finditer(src) if m.group(2).startswith("/")]
-
-
 def externals(src: str) -> list[str]:
-    found = [k for k, rx in EXT_RX.items() if rx.search(src)]
-    return sorted(found)
-
-
-def py_imports(tree: ast.AST, path: Path, root: Path, index: dict[str, int]) -> list[int]:
-    targets = []
-    for node in ast.walk(tree):
-        mods = []
-        if isinstance(node, ast.ImportFrom):
-            base = node.module or ""
-            if node.level:
-                parent = path.parent
-                for _ in range(node.level - 1):
-                    parent = parent.parent
-                rel = parent.joinpath(*base.split(".")) if base else parent
-                mods = [rel] + [rel / a.name for a in node.names]
-            else:
-                mods = [root.joinpath(*base.split("."))] + [root.joinpath(*base.split("."), a.name) for a in node.names]
-        elif isinstance(node, ast.Import):
-            mods = [root.joinpath(*a.name.split(".")) for a in node.names]
-        for m in mods:
-            for cand in (m.with_suffix(".py"), m / "__init__.py"):
-                i = index.get(str(cand))
-                if i is not None:
-                    targets.append(i)
-                    break
-    # Also resolve absolute imports against every ancestor up to the service root (src layouts).
-    return sorted(set(targets))
-
-
-def py_names(tree: ast.AST, path: Path, root: Path, index: dict[str, int]) -> dict[str, int]:
-    """Imported names that resolve to files in this codebase: {local name: file index}."""
-    names = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ImportFrom):
-            continue
-        base = node.module or ""
-        if node.level:
-            parent = path.parent
-            for _ in range(node.level - 1):
-                parent = parent.parent
-            pkg = parent.joinpath(*base.split(".")) if base else parent
-        else:
-            pkg = root.joinpath(*base.split("."))
-        for a in node.names:
-            for cand in (pkg / f"{a.name}.py", pkg / a.name / "__init__.py", pkg.with_suffix(".py"), pkg / "__init__.py"):
-                i = index.get(str(cand))
-                if i is not None:
-                    names[a.asname or a.name] = i
-                    break
-    return names
-
-
-def py_mounts(tree: ast.AST, names: dict[str, int]) -> list[tuple[int, str]]:
-    """include_router(x.router, prefix=...) / register_blueprint(bp, url_prefix=...) -> [(mounted file, prefix)]."""
-    out = []
-    for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("include_router", "register_blueprint") and node.args):
-            continue
-        arg = node.args[0]
-        head = arg.value.id if isinstance(arg, ast.Attribute) and isinstance(arg.value, ast.Name) else arg.id if isinstance(arg, ast.Name) else None
-        prefix = next((str(k.value.value) for k in node.keywords if k.arg in ("prefix", "url_prefix") and isinstance(k.value, ast.Constant)), "")
-        if head in names:
-            out.append((names[head], prefix))
-    return out
+    """External systems any language shares (used for floorplan maps, whose files are not re-scanned per language)."""
+    return sorted(shared_externals(src))
 
 
 def full_prefix(i: int, mounted_by: dict[int, list[tuple[int, str]]], seen: frozenset = frozenset()) -> str:
@@ -229,16 +134,44 @@ def full_prefix(i: int, mounted_by: dict[int, list[tuple[int, str]]], seen: froz
     return full_prefix(parent, mounted_by, seen | {i}) + prefix
 
 
-def js_imports(src: str, path: Path, index: dict[str, int]) -> list[int]:
-    out = []
-    for m in JS_IMPORT.finditer(src):
-        base = (path.parent / m.group(1)).resolve()
-        for cand in (base, *(base.with_suffix(e) for e in (".ts", ".tsx", ".js", ".jsx", ".mjs")), *(base / f"index{e}" for e in (".ts", ".tsx", ".js"))):
-            i = index.get(str(cand))
-            if i is not None:
-                out.append(i)
-                break
-    return out
+def all_prefixes(i: int, mounted_by: dict[int, list[tuple[int, str]]], seen: frozenset = frozenset()) -> list[str]:
+    """Every prefix a file's routes get, one per mount path (an Express router mounted twice serves both)."""
+    if i not in mounted_by or i in seen:
+        return [""]
+    out = [up + prefix for parent, prefix in mounted_by[i] for up in all_prefixes(parent, mounted_by, seen | {i})]
+    return sorted(set(out))
+
+
+def _join(pre: str, path: str) -> str:
+    return (pre.rstrip("/") + "/" + path.lstrip("/")).rstrip("/") or "/" if pre else path
+
+
+def _read(f: Path) -> str:
+    return f.read_text(errors="ignore")
+
+
+def _prepare(all_files: list[tuple[Path, Path]], texts: dict[int, str]) -> dict[str, object]:
+    """Per-language state (e.g. a package index) for languages that need every file before resolving imports."""
+    state: dict[str, object] = {}
+    for lang in langs.LANGUAGES:
+        if not hasattr(lang, "prepare"):
+            continue
+        mine = [i for i, (f, _) in enumerate(all_files) if LANG_BY_EXT[f.suffix] is lang]
+        for i in mine:
+            texts.setdefault(i, _read(all_files[i][0]))
+        state[lang.NAME] = lang.prepare([(i, all_files[i][0], texts[i]) for i in mine])
+    return state
+
+
+def _modules(cm: CodeMap, module_stats: dict[str, dict]) -> None:
+    for sid in cm.services:
+        mods = {k: v for k, v in module_stats.items() if v["service"] == sid}
+        cm.modules.append({"id": sid, "parent": None, "label": humanize(Path(sid).name), "kind": "service", "summary": "",
+                           "paths": [sid + "/**"], "files": sum(v["files"] for v in mods.values()), "loc": sum(v["loc"] for v in mods.values())})
+        for mid, v in mods.items():
+            name = mid.split("::")[1]
+            cm.modules.append({"id": mid, "parent": sid, "label": humanize(name) if name != "(root)" else "Entry points", "kind": "module", "summary": "",
+                               "paths": [f"{sid}/{name}/**"], "files": v["files"], "loc": v["loc"]})
 
 
 def scan(repos: list[Path]) -> CodeMap:
@@ -259,31 +192,24 @@ def scan(repos: list[Path]) -> CodeMap:
     cm.services = sorted(set(root_ids.values()))
     module_stats: dict[str, dict] = {}
     mounted_by: dict[int, list[tuple[int, str]]] = {}
+    texts: dict[int, str] = {}
+    file_sid: list[str] = []
+    state = _prepare(all_files, texts)
     for i, (f, repo) in enumerate(all_files):
-        src = f.read_text(errors="ignore")
+        src = texts.pop(i, None)
+        src = _read(f) if src is None else src
         root = owning_root(f, roots)
         sid = root_ids[str(root)]
+        file_sid.append(sid)
         sub = f.relative_to(root).parts
         mid = f"{sid}::{sub[0] if len(sub) > 1 else '(root)'}"
-        lang = CODE_EXT[f.suffix]
-        routes, links = [], []
-        if lang == "python":
-            try:
-                tree = ast.parse(src)
-                routes = py_routes(tree, src)
-                links = py_imports(tree, f.resolve(), root.resolve(), index)
-                if not links and root != repo:
-                    links = py_imports(tree, f.resolve(), repo.resolve(), index)
-                names = py_names(tree, f.resolve(), root.resolve(), index)
-                for child, prefix in py_mounts(tree, names):
-                    mounted_by.setdefault(child, []).append((i, prefix))
-            except (SyntaxError, ValueError):
-                pass
-        elif lang == "js":
-            routes, links = js_routes(src), js_imports(src, f, index)
-        else:
-            routes = go_routes(src)
-        cm.files.append({"p": rel(f), "m": mid, "t": humanize(f.stem), "d": "", "x": externals(src), "loc": src.count("\n") + 1})
+        lang = LANG_BY_EXT[f.suffix]
+        ctx = langs.Context(index=index, root=root, repo=repo, state=state.get(lang.NAME))
+        routes, links = lang.routes(f, src, ctx), lang.imports(f, src, ctx)
+        if hasattr(lang, "mounts"):
+            for child, prefix in lang.mounts(f, src, ctx):
+                mounted_by.setdefault(child, []).append((i, prefix))
+        cm.files.append({"p": rel(f), "m": mid, "t": humanize(f.stem), "d": "", "x": sorted(lang.externals(src, ctx)), "loc": src.count("\n") + 1})
         for r in routes:
             if r["m"] in METHODS:
                 cm.routes.append({**r, "f": i})
@@ -291,18 +217,15 @@ def scan(repos: list[Path]) -> CodeMap:
         st = module_stats.setdefault(mid, {"files": 0, "loc": 0, "service": sid})
         st["files"] += 1
         st["loc"] += src.count("\n") + 1
-    for r in cm.routes:  # apply router prefixes now that every mount is known
-        pre = full_prefix(r["f"], mounted_by)
-        if pre:
-            r["p"] = (pre.rstrip("/") + "/" + r["p"].lstrip("/")).rstrip("/") or "/"
-    for sid in cm.services:
-        mods = {k: v for k, v in module_stats.items() if v["service"] == sid}
-        cm.modules.append({"id": sid, "parent": None, "label": humanize(Path(sid).name), "kind": "service", "summary": "",
-                           "paths": [sid + "/**"], "files": sum(v["files"] for v in mods.values()), "loc": sum(v["loc"] for v in mods.values())})
-        for mid, v in mods.items():
-            name = mid.split("::")[1]
-            cm.modules.append({"id": mid, "parent": sid, "label": humanize(name) if name != "(root)" else "Entry points", "kind": "module", "summary": "",
-                               "paths": [f"{sid}/{name}/**"], "files": v["files"], "loc": v["loc"]})
+    prefixed: list[dict] = []
+    for r in cm.routes:  # apply router prefixes now that every mount is known (Python: first mount, as before)
+        if LANG_BY_EXT[all_files[r["f"]][0].suffix].NAME == "python":
+            prefixed.append({**r, "p": _join(full_prefix(r["f"], mounted_by), r["p"])})
+        else:
+            prefixed += [{**r, "p": _join(pre, r["p"])} for pre in all_prefixes(r["f"], mounted_by)]
+    cm.routes = prefixed
+    _modules(cm, module_stats)
+    code_clients.attach(cm, all_files, file_sid, {sid: Path(r) for r, sid in root_ids.items()}, index)
     return cm
 
 
@@ -348,9 +271,13 @@ def main() -> None:
         cm, source = scan(repos), "built-in scanner"
     base = repos[0] if len(repos) == 1 else Path(os.path.commonpath([str(r) for r in repos]))
     out = {"generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"), "source": source, "base": str(base),
-           "services": cm.services, "files": cm.files, "links": cm.links, "routes": cm.routes, "modules": cm.modules, "moduleLinks": cm.module_links, "flows": cm.flows}
+           "services": cm.services, "files": cm.files, "links": cm.links, "routes": cm.routes, "modules": cm.modules, "moduleLinks": cm.module_links, "flows": cm.flows,
+           "clientCalls": cm.client_calls}
     Path(a.out).write_text(json.dumps(out, separators=(",", ":")))
-    print(f"code map ({source}): {len(cm.services)} services, {len(cm.files)} files, {len(cm.routes)} APIs, {len(cm.links)} links -> {a.out}")
+    matched = sum(1 for c in cm.client_calls if c[4] is not None)
+    by_tail = sum(1 for c in cm.client_calls if len(c) > 5)
+    calls = f", {len(cm.client_calls)} frontend calls ({matched} matched, {by_tail} by path tail)" if cm.client_calls else ""
+    print(f"code map ({source}): {len(cm.services)} services, {len(cm.files)} files, {len(cm.routes)} APIs, {len(cm.links)} links{calls} -> {a.out}")
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ Claude or Codex reads your AWS account and your code, links the two, and gives y
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757?style=flat-square)](https://code.claude.com/docs/en/overview)
 [![Codex plugin](https://img.shields.io/badge/Codex-plugin-111?style=flat-square)](docs/codex.md)
 [![Tests](https://img.shields.io/github/actions/workflow/status/supreeth-ravi/hopscope/test.yml?branch=main&style=flat-square&label=tests)](https://github.com/supreeth-ravi/hopscope/actions/workflows/test.yml)
-[![Version](https://img.shields.io/badge/version-0.5.1-111?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.6.0-111?style=flat-square)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111?style=flat-square)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-%E2%89%A53.10-111?style=flat-square)](https://www.python.org)
 [![AWS read-only](https://img.shields.io/badge/AWS-read--only-111?style=flat-square)](skills/hopscope/references/iam-policy.json)
@@ -247,7 +247,7 @@ flowchart LR
 Python scripts do the collecting and linking; Claude or Codex runs them, checks the doubtful links with you, and explains the results. Details in [How it works](docs/how-it-works.md).
 
 **AWS:** ECS (Fargate and EC2), EC2, Application and Network Load Balancers, API Gateway, CloudFront, RDS and Aurora, ElastiCache, OpenSearch, DynamoDB, S3, SQS, SNS, EventBridge, Lambda, Cognito, SES, ECR, Secrets Manager, Cost Explorer.<br>
-**Code:** Python (FastAPI, Flask), JavaScript and TypeScript (Express, NestJS), Go. Call sequences with conditions for Python. Uses a [floorplan](https://github.com/haydenschmitty/floorplan) map when your repo has one.
+**Code:** Python (FastAPI, Flask), JavaScript and TypeScript (Express, NestJS), Go, Java and Kotlin (Spring Boot, Spring MVC, Micronaut, JAX-RS, Ktor), C# (ASP.NET Core controllers and minimal APIs). Call sequences with conditions for Python, Java, Kotlin and C#. Frontend calls (fetch, axios, Angular HttpClient) are linked to the backend routes they reach, so a trace starts at the button. Uses a [floorplan](https://github.com/haydenschmitty/floorplan) map when your repo has one.
 
 ## What it adds to your project
 

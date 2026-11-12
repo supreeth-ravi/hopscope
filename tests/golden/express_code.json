@@ -1,0 +1,194 @@
+{
+ "base": "<base>",
+ "clientCalls": [
+  [
+   3,
+   2,
+   "GET",
+   "/api/v1/cups",
+   2
+  ],
+  [
+   3,
+   3,
+   "POST",
+   "/api/v1/cups/{id}/fill",
+   4
+  ],
+  [
+   3,
+   4,
+   "GET",
+   "/api/v1/beans",
+   1
+  ],
+  [
+   3,
+   5,
+   "GET",
+   "/api/v1/teas",
+   null
+  ]
+ ],
+ "files": [
+  {
+   "d": "",
+   "loc": 8,
+   "m": "shop::src",
+   "p": "shop/src/app.js",
+   "t": "App",
+   "x": []
+  },
+  {
+   "d": "",
+   "loc": 3,
+   "m": "shop::src",
+   "p": "shop/src/routes/beans.js",
+   "t": "Beans",
+   "x": []
+  },
+  {
+   "d": "",
+   "loc": 4,
+   "m": "shop::src",
+   "p": "shop/src/routes/cups.js",
+   "t": "Cups",
+   "x": []
+  },
+  {
+   "d": "",
+   "loc": 6,
+   "m": "till::src",
+   "p": "till/src/api.ts",
+   "t": "Api",
+   "x": []
+  }
+ ],
+ "flows": [],
+ "links": [
+  [
+   0,
+   1,
+   0,
+   ""
+  ],
+  [
+   0,
+   1,
+   0,
+   ""
+  ],
+  [
+   0,
+   2,
+   0,
+   ""
+  ]
+ ],
+ "moduleLinks": [],
+ "modules": [
+  {
+   "files": 3,
+   "id": "shop",
+   "kind": "service",
+   "label": "Shop",
+   "loc": 15,
+   "parent": null,
+   "paths": [
+    "shop/**"
+   ],
+   "summary": ""
+  },
+  {
+   "files": 3,
+   "id": "shop::src",
+   "kind": "module",
+   "label": "Src",
+   "loc": 15,
+   "parent": "shop",
+   "paths": [
+    "shop/src/**"
+   ],
+   "summary": ""
+  },
+  {
+   "files": 1,
+   "id": "till",
+   "kind": "service",
+   "label": "Till",
+   "loc": 6,
+   "parent": null,
+   "paths": [
+    "till/**"
+   ],
+   "summary": ""
+  },
+  {
+   "files": 1,
+   "id": "till::src",
+   "kind": "module",
+   "label": "Src",
+   "loc": 6,
+   "parent": "till",
+   "paths": [
+    "till/src/**"
+   ],
+   "summary": ""
+  }
+ ],
+ "routes": [
+  {
+   "d": "",
+   "f": 0,
+   "l": 7,
+   "m": "GET",
+   "p": "/health",
+   "t": ""
+  },
+  {
+   "d": "",
+   "f": 1,
+   "l": 2,
+   "m": "GET",
+   "p": "/api/v1/beans",
+   "t": ""
+  },
+  {
+   "d": "",
+   "f": 2,
+   "l": 2,
+   "m": "GET",
+   "p": "/api/v1/cups",
+   "t": ""
+  },
+  {
+   "d": "",
+   "f": 2,
+   "l": 2,
+   "m": "GET",
+   "p": "/api/v2/cups",
+   "t": ""
+  },
+  {
+   "d": "",
+   "f": 2,
+   "l": 3,
+   "m": "POST",
+   "p": "/api/v1/cups/:id/fill",
+   "t": ""
+  },
+  {
+   "d": "",
+   "f": 2,
+   "l": 3,
+   "m": "POST",
+   "p": "/api/v2/cups/:id/fill",
+   "t": ""
+  }
+ ],
+ "services": [
+  "shop",
+  "till"
+ ],
+ "source": "built-in scanner"
+}
