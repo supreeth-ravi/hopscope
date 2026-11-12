@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from history_diff import FIELDS, NAMED, diff_resources, resources  # noqa: F401 - kept importable from history
 from iac_common import mask_numbers
 
 KEPT = ("aws.json", "links.json", "model.json")
@@ -25,21 +26,6 @@ SUMMARISED = ("code.json", "flows.json")
 MAX_ITEMS = 200  # per list in a diff; a whole new account would otherwise flood changes.json
 HISTORY = 10  # recent diffs carried in changes.json
 NAME = re.compile(r"^\d{8}T\d{6}Z(-\d+)?$")
-FIELDS = {  # what is compared for each kind of resource (metrics are left out: they change every run)
-    "ecs": ("desired", "running", "size", "images", "taskDef", "tgs"),
-    "lb": ("scheme", "rules"),
-    "sqs": ("dlq", "fifo", "redrive"),
-    "rds": ("engine", "class", "minAcu", "maxAcu"),
-    "lambda": ("mem",),
-    "ec2": ("type", "state"),
-    "cache": ("type", "engine"),
-    "search": ("type", "count"),
-    "sfn": ("type",),
-    "kinesis": ("shards", "mode"),
-    "msk": ("brokers", "instance", "version"),
-    "eks": ("version",),
-}
-NAMED = ("sns", "cognito", "apigw", "cdn", "dynamodb", "eventbridge", "ses")
 LABELS = {"taskDef": "task definition", "tgs": "target groups", "minAcu": "min ACU", "maxAcu": "max ACU", "mem": "memory MB"}
 
 
@@ -155,48 +141,6 @@ def load(snap: Path) -> dict:
 
 # ---- what changed ---------------------------------------------------------------------------------
 
-def _val(v: Any) -> Any:
-    return ", ".join(map(str, v)) if isinstance(v, list) else v
-
-
-def resources(aws: dict) -> dict[str, dict]:
-    """Every resource as {"kind:name": {"kind", "name", field: value}} with only the fields worth comparing."""
-    out: dict[str, dict] = {}
-    for kind, fields in FIELDS.items():
-        for x in aws.get(kind) or []:
-            if not isinstance(x, dict):
-                continue
-            name = f'{x.get("cluster")}/{x.get("n")}' if kind == "ecs" else str(x.get("n") or x.get("id") or "")
-            row: dict[str, Any] = {"kind": kind, "name": name}
-            for f in fields:
-                if f == "rules":
-                    row[f] = sorted({f'{r.get("when")} -> {r.get("tg")}' for r in x.get("routes") or [] if isinstance(r, dict)})
-                elif f in x and x[f] is not None:
-                    row[f] = x[f]
-            out[f"{kind}:{name}"] = row
-    for kind in NAMED:
-        for x in aws.get(kind) or []:
-            name = str(x.get("n") if isinstance(x, dict) else x)
-            out[f"{kind}:{name}"] = {"kind": kind, "name": name}
-    return out
-
-
-def diff_resources(old: dict[str, dict], new: dict[str, dict]) -> dict:
-    added = [{"kind": new[k]["kind"], "name": new[k]["name"]} for k in sorted(new.keys() - old.keys())]
-    removed = [{"kind": old[k]["kind"], "name": old[k]["name"]} for k in sorted(old.keys() - new.keys())]
-    changed = []
-    for k in sorted(old.keys() & new.keys()):
-        a, b = old[k], new[k]
-        for f in FIELDS.get(a["kind"], ()):
-            if a.get(f) == b.get(f):
-                continue
-            if f == "rules":
-                gone, came = sorted(set(a.get(f, [])) - set(b.get(f, []))), sorted(set(b.get(f, [])) - set(a.get(f, [])))
-                changed.append({"kind": a["kind"], "name": a["name"], "field": f, "from": "; ".join("- " + r for r in gone), "to": "; ".join("+ " + r for r in came)})
-            else:
-                changed.append({"kind": a["kind"], "name": a["name"], "field": f, "from": _val(a.get(f)), "to": _val(b.get(f))})
-    over = max(0, len(added) - MAX_ITEMS) + max(0, len(removed) - MAX_ITEMS) + max(0, len(changed) - MAX_ITEMS)
-    return {"added": added[:MAX_ITEMS], "removed": removed[:MAX_ITEMS], "changed": changed[:MAX_ITEMS], "truncated": over}
 
 
 def link_changes(old: dict, new: dict) -> list[dict]:

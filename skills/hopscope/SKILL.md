@@ -56,8 +56,8 @@ are in `references/iam-policy.json`; share it if their role lacks read access.
 
 ### 2. Ask only what you can't find
 
-You need: the **region**, the **repo folders** for the services that run in that account, and
-optionally an AWS **profile**. Look in the current directory and the user's projects first; ask only
+You need: the **region** (or several), the **repo folders** for the services that run in that account, and
+optionally an AWS **profile** (or several, one account each). Look in the current directory and the user's projects first; ask only
 for what's missing. If they have prod and staging in one account, the default pattern already treats
 names containing stag/dev/test/qa as non-production (`--staging-pattern` overrides it).
 
@@ -73,14 +73,27 @@ sources. For Kubernetes workloads on EKS (or any cluster), add `--kube-context <
 `--kube-contexts a,b`): it runs read-only `kubectl get` for workloads, services, ingresses, HPAs and events
 (never Secrets) and is skipped with a warning if `kubectl` is missing. Only pass contexts the user names.
 
+**Several regions or accounts.** `--region eu-west-1,us-east-1` or `--all-regions` (every region enabled for
+the account; regions with nothing in them are left out), and `--profile p1,p2` (one account per profile). Only
+when the user asks for every account of their AWS organization, add `--org-role <RoleName>` (optionally
+`--accounts id1,id2`): from the management or a delegated administrator account it calls
+`organizations:ListAccounts` and `sts:AssumeRole` into `arn:<partition>:iam::<id>:role/<RoleName>` (session
+`hopscope`, 1 hour, with a read-only inline session policy) in each account; it takes at most one `--profile`. That role must exist in every account with `references/iam-policy.json` as
+its policy and trust the signing-in account, and the caller needs `organizations:ListAccounts` and `sts:AssumeRole`
+on it (setup in `docs/getting-started.md`); never create roles or change IAM yourself. Accounts that can't be read
+are skipped with a warning; mention them. Every row then carries `region` and `account` (the alias, or
+`acct-••••1234`: never print or store full account numbers), the console gets region and account filters, and a
+name two scopes share is prefixed (`eu-west-1:orders`), which is also the name to use in `hopscope.json`.
+
 This runs eight steps (inventory, code map, call flows, linking, hourly metrics, drift, health rules,
 snapshot) and writes `<workdir>/site/`. Drift and the snapshot never stop the build; if they fail, it warns. It takes 1–5 minutes on a typical account. Individual steps that lack
 permission are skipped with a warning rather than failing the run — mention any warnings to the user.
 
 If a repo already contains a floorplan map (`floorplan/graph.json`), the code map uses its
 human-readable names; otherwise the built-in scanner handles Python (FastAPI, Flask), JavaScript and
-TypeScript (Express, NestJS), Go, Java and Kotlin (Spring, Micronaut, JAX-RS, Ktor) and C# (ASP.NET Core
-controllers and minimal APIs). Call sequences are traced for Python, Java, Kotlin and C# handlers; Go and
+TypeScript (Express, NestJS), Go, Java and Kotlin (Spring, Micronaut, JAX-RS, Ktor), C# (ASP.NET Core
+controllers and minimal APIs), Ruby (Rails, Sinatra, Grape), PHP (Laravel, Symfony, Slim) and Rust (axum,
+actix-web, Rocket). Call sequences are traced for Python, Java, Kotlin, C#, Ruby, PHP and Rust handlers; Go and
 JavaScript still get routes, imports and the infrastructure path. HTTP calls in JS/TS frontends are matched to
 the backend routes they reach (`clientCalls` in code.json).
 
@@ -167,7 +180,7 @@ re-reading the code or the account.
   `--format drawio --out arch.drawio` (architecture with AWS icons, opens in draw.io). Exports describe
   the real system, so treat them like the console: don't publish one from a real account.
 
-The answers are as good as the build: call sequences are traced for Python, Java, Kotlin and C# handlers, and a route's
+The answers are as good as the build: call sequences are traced for Python, Java, Kotlin, C#, Ruby, PHP and Rust handlers, and a route's
 compute comes from the reviewed links. A compute marked unconfirmed (`{"name", "confidence", "unconfirmed": true}`
 in a tool result, "unconfirmed link, 0.5" in text) is a low-confidence guess: tell the user it is unconfirmed, never
 state it as fact, and offer `hopscope.py review`. In design mode there are no live numbers.
@@ -204,6 +217,8 @@ routes, code paths and numbers still describe the real system. Build the demo fr
 - `scripts/hopscope_export.py` — Mermaid and draw.io exports
 - `scripts/local_agent.py` — runs the console's Ask on the Claude Code or Codex CLI when served locally
 - `scripts/aws_inventory.py`, `scripts/aws_timeseries.py` — read-only AWS collectors
+- `scripts/aws_multi.py`, `aws_accounts.py`, `aws_merge.py`, `scopes.py` — several regions and accounts in one run, merged
+- `scripts/linker_lambda.py` — Lambda functions linked to the code folder they run
 - `scripts/code_scan.py`, `scripts/call_flow.py` — code map and per-API call sequences
 - `scripts/linker.py` — code ↔ infrastructure links with confidence and evidence
 - `scripts/rules.py` — health rules, action queue, savings (thresholds overridable)

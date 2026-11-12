@@ -147,6 +147,8 @@ details > summary:hover { background: var(--raise) }
 @media (max-width: 1000px) { .grid-3 { grid-template-columns: 1fr } }
 .chip-btn { background: var(--raise); border: 1px solid var(--line); color: var(--muted); border-radius: 999px; padding: 4px 10px; font: 500 12px var(--f-body); cursor: pointer }
 .chip-btn[aria-pressed="true"] { color: var(--bg); background: var(--signal); border-color: var(--signal) }
+.scope-chips { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center } .scope-bar:has(.scope-chips[hidden]) { display: none }
+.scope-chips .sep { width: 1px; height: 16px; background: var(--line); margin: 0 2px }
 .sdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin: 0 4px 0 8px; background: var(--signal) }
 .sdot.warn { background: var(--amber) } .sdot.bad { background: var(--red) } .sdot.off { background: var(--line) }
 .arch-info { padding: 12px 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; min-height: 46px }
@@ -292,6 +294,7 @@ td .rp { font-size: 11px }
       <div class="panel"><div class="panel-head"><h2>Queue throughput</h2><span class="label">messages sent per hour</span></div><div class="qmult" id="qmult"></div></div>
     </div>
     <details class="panel catalogue"><summary><h2 style="display:inline">All services</h2> <span class="label" id="sig-count"></span></summary>
+      <div class="scope-bar" style="margin-top:12px"><span class="scope-chips" hidden></span></div>
       <div class="grid-2" style="margin-top:14px">
         <div><div class="matrix" id="matrix"></div></div>
         <div><div class="alerts" id="alerts"></div></div>
@@ -307,6 +310,7 @@ td .rp { font-size: 11px }
         <span class="legend-line" style="margin-left:auto">
           <button class="chip-btn" id="env-prod" type="button" aria-pressed="true">Production</button>
           <button class="chip-btn" id="env-all" type="button" aria-pressed="false">Include staging</button>
+          <span class="scope-chips" hidden></span>
           <span><i class="sdot ok"></i>healthy</span><span><i class="sdot warn"></i>warning</span><span><i class="sdot bad"></i>critical</span><span><i class="sdot off"></i>idle</span>
         </span>
       </div>
@@ -324,6 +328,7 @@ td .rp { font-size: 11px }
   </section>
 
   <section class="view" id="v-components" hidden>
+    <div class="scope-bar"><span class="scope-chips" hidden></span></div>
     <div class="kpis" id="comp-kpis"></div>
     <div class="comp-nav" id="comp-nav"></div>
     <div id="comp-body" style="display:grid;gap:18px"></div>
@@ -402,9 +407,39 @@ const EXTERNAL = {
 };
 let OBS = null; // observed.json: routes seen in browser captures (hopscope.py observe --har)
 let A = null; // AWS component inventory (aws.json)
+// Several regions or accounts in one build (aws.json regions/accounts): a filter, and where each row runs.
+const SCOPE = { region: 'all', account: 'all' };
+const REGIONS = () => (Array.isArray(A?.regions) ? A.regions.map(String) : []), ACCOUNTS = () => (Array.isArray(A?.accounts) ? A.accounts.map(String) : []);
+const multiRegion = () => REGIONS().length > 1, multiAccount = () => ACCOUNTS().length > 1;
+const inScope = (r) => !r || typeof r !== 'object' || ((SCOPE.region === 'all' || !r.region || r.region === 'global' || r.region === SCOPE.region) && (SCOPE.account === 'all' || !r.account || r.account === SCOPE.account));
+const whereText = (r) => [multiAccount() ? r?.account : '', multiRegion() ? r?.region : ''].filter(Boolean).map(String).join(' · ');
+const scopePill = (r) => (whereText(r) ? ` <span class="pill mute">${esc(whereText(r))}</span>` : '');
+function scopedA() {
+  const out = { ...A }, all = SCOPE.region === 'all' && SCOPE.account === 'all';
+  Object.keys(A).forEach((k) => { if (Array.isArray(A[k]) && A[k].some((x) => x && typeof x === 'object')) out[k] = A[k].filter(inScope); });
+  const where = A.where && typeof A.where === 'object' ? A.where : {}; // names-only lists say where each name is in aws.json "where"
+  ['dynamodb', 'ses', 'eventbridge'].forEach((k) => { if (!all && Array.isArray(A[k]) && where[k]) out[k] = A[k].filter((n) => inScope(where[k][n])); });
+  if (!all && Array.isArray(A.counts)) ['nat', 'ecr', 'secrets'].forEach((k) => { out[k] = A.counts.filter(inScope).reduce((s, c) => s + (Number(c[k]) || 0), 0); });
+  return out;
+}
+function inScopeView(fn) { if (!A) { fn(); return; } const fullA = A, fullI = INFRA; A = scopedA(); INFRA = INFRA.filter(inScope); try { fn(); } finally { A = fullA; INFRA = fullI; } }
+function renderScopeChips() {
+  const chips = (key, all, list) => (list.length > 1 ? [`<button class="chip-btn" type="button" data-scope="${key}" data-val="all" aria-pressed="${SCOPE[key] === 'all'}">${all}</button>`,
+    ...list.map((v) => `<button class="chip-btn" type="button" data-scope="${key}" data-val="${esc(v)}" aria-pressed="${SCOPE[key] === v}">${esc(v)}</button>`)].join('') : '');
+  const html = [chips('account', 'All accounts', ACCOUNTS()), chips('region', 'All regions', REGIONS())].filter(Boolean).join('<i class="sep"></i>');
+  document.querySelectorAll('.scope-chips').forEach((el) => { el.innerHTML = html; el.hidden = !html; });
+}
+function renderScoped() { inScopeView(renderComponents); inScopeView(renderAwsArch); inScopeView(renderOverview); }
+const isLambda = (r) => r?.kind === 'lambda';
 function edgeFor(name) {
   const row = byName[name];
   if (!A || !row?.key) return null;
+  if (isLambda(row)) { // a function linked to code that serves routes is reached through the busiest API Gateway in its region
+    if (!D?.routes.some((x) => serviceRoot(D.files[x.f].p) === row.sys)) return null;
+    const near = (a) => (!row.region || !a.region || a.region === row.region) && (!row.account || !a.account || a.account === row.account);
+    const gw = (A.apigw || []).filter(near).sort((a, b) => (b.req || 0) - (a.req || 0))[0];
+    return gw ? { lb: gw.n, when: 'API Gateway route', port: 443, scheme: 'internet-facing', source: 'apigw', proto: gw.proto } : null;
+  }
   const lbs = [...A.lb].sort((a, b) => (a.scheme === 'internal') - (b.scheme === 'internal')); // a client comes in through a public entry when there is one
   for (const lb of lbs) for (const r of lb.routes) if (r.services.includes(row.key)) return { lb: lb.n, when: r.when, port: r.port, scheme: lb.scheme, source: lb.source, k8s: lb.k8s };
   return null;
@@ -474,17 +509,17 @@ function renderOverview() {
 }
 function cellHtml(r) {
   const g = (lab, v, max = 100) => `<div class="gauge"><span>${lab}</span><div class="gt"><div class="gf ${lvlOf((v / max) * 100)}" style="width:${Math.max(2, Math.min(100, (v / max) * 100))}%"></div></div></div>`;
-  const body = DESIGN ? `<span class="gauge">${esc(planned(r))}</span>` : r.kind === 'rds' ? g('CAP', r.cpu) : ['sqs', 'lb'].includes(r.kind) ? `<span class="gauge">${esc(r.size)}</span>` : g('CPU', r.cpu) + (r.mem != null ? g('MEM', r.mem) : '');
-  return `<button class="cell ${r.lvl || ''}" data-res="${esc(r.n)}" title="${esc(r.n)}"><span class="nm">${esc(r.n)}</span>${body}</button>`;
+  const body = DESIGN ? `<span class="gauge">${esc(planned(r))}</span>` : r.kind === 'rds' ? g('CAP', r.cpu) : ['sqs', 'lb', 'lambda'].includes(r.kind) ? `<span class="gauge">${esc(r.size)}</span>` : g('CPU', r.cpu) + (r.mem != null ? g('MEM', r.mem) : '');
+  return `<button class="cell ${r.lvl || ''}" data-res="${esc(r.n)}" title="${esc(r.n)}${whereText(r) ? ' · ' + esc(whereText(r)) : ''}"><span class="nm">${esc(r.n)}</span>${body}</button>`;
 }
 function openRes(name) {
   const r = byName[name]; if (!r) return;
   const roots = Object.entries(PLACEMENT).filter(([, v]) => v.compute.includes(name)).map(([k]) => k);
   const routes = D ? D.routes.filter((x) => roots.includes(serviceRoot(D.files[x.f].p))) : [];
   $('#drawer').innerHTML = `<button class="btn ghost" id="dclose" style="justify-self:end">Close</button>
-    <div><span class="label">${esc(SYS_LABEL[r.sys] || r.sys)} · ${r.env}</span><h2 class="mono" style="font-family:var(--f-mono);font-size:17px;word-break:break-all">${esc(r.n)}</h2></div>
+    <div><span class="label">${esc(SYS_LABEL[r.sys] || r.sys)} · ${esc(r.env)}${r.region ? ' · ' + esc(r.region) : ''}</span><h2 class="mono" style="font-family:var(--f-mono);font-size:17px;word-break:break-all">${esc(r.n)}</h2></div>
     ${r.note ? `<div class="alert ${r.lvl}"><div><b>${r.lvl === 'bad' ? 'Critical' : 'Warning'}</b><span>${esc(r.note)}</span></div></div>` : ''}
-    <dl><dt>Type</dt><dd>${{ ecs: 'ECS container service', ec2: 'EC2 server', rds: 'Aurora serverless database', sqs: 'SQS queue', lb: 'Load balancer' }[r.kind]}</dd>${edgeFor(r.n) ? `<dt>Public route</dt><dd class="mono">${esc(edgeFor(r.n).lb)}<br>${esc(edgeFor(r.n).when)}</dd>` : ''}<dt>Size</dt><dd>${esc(r.size)}</dd>
+    <dl>${r.region || r.account ? `<dt>Runs in</dt><dd class="mono">${esc([r.account, r.region].filter(Boolean).join(' · '))}</dd>` : ''}<dt>Type</dt><dd>${{ ecs: 'ECS container service', ec2: 'EC2 server', rds: 'Aurora serverless database', sqs: 'SQS queue', lb: 'Load balancer', lambda: 'Lambda function' }[r.kind]}</dd>${edgeFor(r.n) ? `<dt>Public route</dt><dd class="mono">${esc(edgeFor(r.n).lb)}<br>${esc(edgeFor(r.n).when)}</dd>` : ''}<dt>Size</dt><dd>${esc(r.size)}</dd>
     ${DESIGN ? (r.kind === 'ecs' ? `<dt>Planned tasks</dt><dd class="mono">${r.tasks}</dd>` : '') : `<dt>${r.kind === 'rds' ? 'Capacity used' : 'CPU avg'}</dt><dd class="mono">${fmt(r.cpu)}%</dd>${r.mem != null ? `<dt>Memory avg</dt><dd class="mono">${fmt(r.mem)}%</dd>` : ''}`}
     <dt>Runs code</dt><dd class="mono">${roots.map(esc).join('<br>') || '—'}${roots.length && linkPill(r.n) ? '<br>' + linkPill(r.n) : ''}</dd><dt>APIs served</dt><dd>${routes.length || '—'}</dd></dl>
     ${routes.length ? `<div><span class="label">Sample APIs</span>${routes.slice(0, 12).map((x) => `<button class="route" data-route="${D.routes.indexOf(x)}"><span class="verb ${esc(x.m)}">${esc(x.m)}</span><span class="rp">${esc(x.p)}</span></button>`).join('')}</div>` : ''}`;
@@ -558,7 +593,8 @@ function traceRoute(ri) {
   const fit = (n) => (fp.includes(n.split("-").slice(-2).join("-")) ? 2 : 0) + (edgeFor(n) ? 1 : 0) + (byName[n]?.tasks ? 0.5 : 0);
   const compute = (PLACEMENT[root]?.compute || []).slice().sort((a, b) => fit(b) - fit(a));
   const edge = edgeFor(compute[0]);
-  const queues = (QUEUES[root] || []).map((n) => A?.sqs.find((q) => q.n === n)).filter(Boolean);
+  const where = byName[compute[0]] || {}, sameScope = (q) => ['region', 'account'].every((k) => !where[k] || !q[k] || q[k] === where[k]);
+  const queues = (QUEUES[root] || []).map((n) => A?.sqs.find((q) => q.n === n)).filter((q) => q && sameScope(q));
   return { ri, r, root, compute, edge, queues, place: PLACEMENT[root], localFiles, touch, ext: externals(localFiles), downstream: Object.values(downstream) };
 }
 
@@ -775,7 +811,8 @@ function buildSeq(t) {
   const callers = callersOf(t.ri);
   const seen = obsFor(t.ri);
   add('client', t.edge ? 'alb' : 'task', 'sync', `${t.r.m} ${host ? 'https://' + host : ''}${t.r.p}`, [t.r.t, t.r.d, callers.length ? `Called from ${callers.slice(0, 2).join(', ')}` : '', seen ? upper(obsNote(seen)) : ''].filter(Boolean).join('. '));
-  if (t.edge) add('alb', 'task', 'sync', `Rule: ${t.edge.when.replace(/host-header=/g, 'host ').replace(/path-pattern=/g, 'path ')}`, `Forwarded to ${isK8s(byName[t.compute[0]]) ? 'Kubernetes workload' : 'ECS service'} ${t.compute[0]}.`);
+  if (t.edge?.source === 'apigw') add('alb', 'task', 'sync', `Route: ${t.r.m} ${t.r.p}`, `API Gateway invokes the Lambda function ${t.compute[0]}.`);
+  else if (t.edge) add('alb', 'task', 'sync', `Rule: ${t.edge.when.replace(/host-header=/g, 'host ').replace(/path-pattern=/g, 'path ')}`, `Forwarded to ${isK8s(byName[t.compute[0]]) ? 'Kubernetes workload' : 'ECS service'} ${t.compute[0]}.`);
   add('task', 'task', 'sync', `Handler runs: ${D.files[t.r.f].p.split('/').pop()}:${t.r.l}`, D.files[t.r.f].t, D.files[t.r.f].p + ':' + t.r.l);
   const followed = new Set(), queued = new Set();
   (F[t.ri] || []).forEach(([, k, lab, fi, ln, c, why = '', via = '']) => {
@@ -829,10 +866,10 @@ function layoutArch(t, S) {
   put('client', 24, H / 2 - 34, 124, 68, 'client', 'Client', 'browser / app');
   if (used.has('internet')) put('internet', 24, H - 110, 124, 60, 'internet', 'External API', 'via NAT gateway');
   if (!DESIGN) put('dns', 190, 60, 130, 56, 'dns', 'Route 53', S.host || '');  // the files say nothing about DNS
-  if (used.has('alb')) put('alb', 362, H / 2 - 34, 150, 68, 'alb', t.edge.lb, t.edge.source === 'kubernetes' ? `${t.edge.k8s || 'Service'} · :${t.edge.port}` : t.edge.source === 'compose' ? `${t.edge.scheme === 'internal' ? 'internal' : 'published'} port · :${t.edge.port}` : `${t.edge.scheme === 'internal' ? 'internal' : 'public'} ALB · :${t.edge.port}`);
+  if (used.has('alb')) put('alb', 362, H / 2 - 34, 150, 68, 'alb', t.edge.lb, t.edge.source === 'kubernetes' ? `${t.edge.k8s || 'Service'} · :${t.edge.port}` : t.edge.source === 'apigw' ? `API Gateway ${t.edge.proto || ''}` : t.edge.source === 'compose' ? `${t.edge.scheme === 'internal' ? 'internal' : 'published'} port · :${t.edge.port}` : `${t.edge.scheme === 'internal' ? 'internal' : 'public'} ALB · :${t.edge.port}`);
   if (used.has('fe')) { const r = byName[S.fe.ec2]; put('fe', 545, 100, 250, 58, 'ec2', S.fe.ec2, `EC2 · ${r?.size?.split(' · ')[0] || ''}${DESIGN ? '' : ' · CPU ' + fmt(r?.cpu) + '%'}`, { lvl: r?.lvl }); }
   const c = byName[t.compute[0]];
-  put('task', 545, used.has('fe') ? 200 : 136, 250, taskH, 'task', t.compute[0] || 'service', c ? (DESIGN || isK8s(c) ? `${runsOn(c)} · ${DESIGN ? planned(c) : `${c.tasks} ready`}` : `ECS Fargate · ${c.size} · CPU ${fmt(c.cpu)}%${c.mem != null ? ' · mem ' + fmt(c.mem) + '%' : ''}`) : (DESIGN ? 'not in the files' : 'not in AWS snapshot'), { calls, lvl: c?.lvl });
+  put('task', 545, used.has('fe') ? 200 : 136, 250, taskH, 'task', t.compute[0] || 'service', c ? isLambda(c) ? `${c.size}${DESIGN ? '' : ` · ${n0(c.inv || 0)} calls / 3d`}` : (DESIGN || isK8s(c) ? `${runsOn(c)} · ${DESIGN ? planned(c) : `${c.tasks} ready`}` : `ECS Fargate · ${c.size} · CPU ${fmt(c.cpu)}%${c.mem != null ? ' · mem ' + fmt(c.mem) + '%' : ''}`) : (DESIGN ? 'not in the files' : 'not in AWS snapshot'), { calls, lvl: c?.lvl });
   let sy = nodes.task.y + taskH + 26;
   svcIds.forEach((id) => { const n = id.slice(4), r = byName[n]; put(id, 545, sy, 250, 56, 'svc', n, r ? (DESIGN || isK8s(r) ? `${runsOn(r)} · ${DESIGN ? planned(r) : `${r.tasks} ready`}` : `ECS · CPU ${fmt(r.cpu)}%${r.mem != null ? ' · mem ' + fmt(r.mem) + '%' : ''}`) : 'ECS service', { lvl: r?.lvl }); sy += 72; });
   const db = byName[M?.primaryDb];
@@ -868,13 +905,14 @@ function drawArch(t) {
   const S = buildSeq(t), L = layoutArch(t, S), { nodes, W, H } = L;
   const g = [];
   const zone = (x, y, w, h, label, color, dash = '') => g.push(`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="12" fill="none" stroke="${color}" stroke-width="1.2" ${dash ? `stroke-dasharray="${dash}"` : ''}/><text class="zone-t" x="${x + 14}" y="${y + 20}" fill="${color}">${label}</text>`);
-  zone(170, 22, W - 186, H - 40, `AWS Cloud · ${esc(M?.meta.region || '')}`, 'var(--muted)');
+  const runsAt = byName[t.compute[0]];  // with several regions or accounts, the trace runs in its compute's
+  zone(170, 22, W - 186, H - 40, `AWS Cloud · ${esc(runsAt?.region || M?.meta.region || '')}${multiAccount() && runsAt?.account ? ' · ' + esc(runsAt.account) : ''}`, 'var(--muted)');
   zone(336, 40, 680, H - 76, 'VPC', 'var(--violet)');
   zone(350, 68, 176, H - 118, 'Public subnet', 'var(--signal)', '5 4');
   zone(532, 68, 278, H - 118, 'Private subnet · app', 'var(--blue)', '5 4');
   zone(818, 68, 186, H - 118, 'Private subnet · data', 'var(--blue)', '5 4');
   zone(1036, 48, 248, H - 84, 'AWS managed services', 'var(--amber)', '2 4');
-  if (nodes.task) g.push(`<rect x="${nodes.task.x - 8}" y="${nodes.task.y - 26}" width="${nodes.task.w + 16}" height="${nodes.task.h + 34}" rx="10" fill="none" stroke="var(--signal)" stroke-opacity=".5" stroke-dasharray="3 3"/><text class="zone-t" x="${nodes.task.x}" y="${nodes.task.y - 10}" fill="var(--signal)">${isK8s(byName[t.compute[0]]) ? 'Kubernetes namespace' : 'ECS cluster'} · ${esc(byName[t.compute[0]]?.cluster || '')}</text>`);
+  if (nodes.task) g.push(`<rect x="${nodes.task.x - 8}" y="${nodes.task.y - 26}" width="${nodes.task.w + 16}" height="${nodes.task.h + 34}" rx="10" fill="none" stroke="var(--signal)" stroke-opacity=".5" stroke-dasharray="3 3"/><text class="zone-t" x="${nodes.task.x}" y="${nodes.task.y - 10}" fill="var(--signal)">${isLambda(byName[t.compute[0]]) ? 'Lambda function' : isK8s(byName[t.compute[0]]) ? 'Kubernetes namespace' : 'ECS cluster'} · ${esc(byName[t.compute[0]]?.cluster || byName[t.compute[0]]?.region || '')}</text>`);
   // arrows (drawn under nodes)
   const pairCount = {};
   S.seq.forEach((s, i) => {
@@ -978,6 +1016,8 @@ function narrate(s, i, S, t) {
   if (s.from === 'alb' && s.to === 'fe') return `The load balancer sees the host name and sends it to the ${S.fe.ec2} server.`;
   if (s.from === 'fe') return `${S.fe.ec2} sends the page back. The user fills it in and hits submit.`;
   if (s.from === 'client') return `Now the real call: a ${t.r.m} to ${t.r.p}.`;
+  if (s.from === 'alb' && s.to === 'task' && t.edge?.source === 'apigw') return `API Gateway matches the route and invokes the ${svc} function.`;
+  if (s.from === 'task' && s.to === 'task' && isLambda(byName[svc])) return `Inside the function, the handler in ${D.files[t.r.f].p.split('/').pop()} takes over.`;
   if (s.from === 'alb' && s.to === 'task') return S.fe ? `This time the path matches the API rule, so it goes to the ${svc} container.` : `The load balancer matches the rule and hands it to the ${svc} container.`;
   if (s.from === 'task' && s.to === 'task') return `Inside the container, the handler in ${D.files[t.r.f].p.split('/').pop()} takes over.`;
   if (s.kind === 'ret' && s.to === 'client') return S.seq.some((x) => x.kind === 'async') ? `The response goes back to the browser. The user is done, but work carries on in the background.` : `And the response heads back to the browser. That’s the whole round trip.`;
@@ -1196,6 +1236,7 @@ const shortHost = (when) => (when.match(/host-header=([^ &]+)/)?.[1] || '').spli
 const EXT_NODE = { postgres: 'aurora', mysql: 'aurora', mssql: 'aurora', mongo: 'aurora', cache: 'valkey', search: 'search', cognito: 'cognito', sqs: 'sqs', ses: 'ses', s3: 's3', llm: 'ext', chatapps: 'chat',
   sfn: 'sfn', kinesis: 'kinesis', kafka: 'msk' };
 
+const byRegionLb = (l) => (multiRegion() && SCOPE.region === 'all' && l.region ? `${l.region} · ` : '');
 function renderAwsArch() {
   if (!A || !M) return;
   const showStg = ARCH_ENV === 'all', inEnv = (env) => showStg || env === 'prod';
@@ -1215,9 +1256,9 @@ function renderAwsArch() {
   const envOfName = (n) => (/(^|[-_.])(stag|staging|stg|dev|test|qa)([-_.]|$)/i.test(n) ? 'staging' : 'prod');
   const lbs = A.lb.filter((l) => inEnv(envOfName(l.n))).sort((a, b) => b.req - a.req);
   const pub = lbs.filter((l) => l.scheme !== 'internal').slice(0, 5), internal = lbs.filter((l) => l.scheme === 'internal').slice(0, 2);
-  pub.forEach((l, i) => { const errRate = l.req ? l.err / l.req : 0;
+  pub.forEach((l, i) => { const errRate = l.req ? l.err / l.req : 0, rg = byRegionLb(l);
     if (l.source === 'kubernetes') { node('lb:' + l.n, 430, 110 + i * 100, 160, 66, { icon: 'alb', title: l.n, sub: `${l.k8s || 'Service'} · ${l.routes.length} routes`, lvl: 'ok', note: `${l.routes.length} routing rules` }); return; }
-    node('lb:' + l.n, 430, 110 + i * 100, 160, 66, { icon: 'alb', title: l.n, sub: DESIGN ? (l.source === 'compose' ? `published ports · ${l.routes.length}` : `${l.type === 'application' ? 'ALB' : 'NLB'} · ${l.routes.length} rules`) : `${l.type === 'application' ? 'ALB' : 'NLB'} · ${n0(l.req)} ${l.type === 'network' ? 'flows' : 'req'}`,
+    node('lb:' + l.n, 430, 110 + i * 100, 160, 66, { icon: 'alb', title: l.n, sub: rg + (DESIGN ? (l.source === 'compose' ? `published ports · ${l.routes.length}` : `${l.type === 'application' ? 'ALB' : 'NLB'} · ${l.routes.length} rules`) : `${l.type === 'application' ? 'ALB' : 'NLB'} · ${n0(l.req)} ${l.type === 'network' ? 'flows' : 'req'}`),
       lvl: errRate > 0.05 ? 'bad' : l.req === 0 && !DESIGN ? 'off' : 'ok', note: errRate > 0.05 ? `${n0(l.err)} errors in 3 days` : `${l.routes.length} routing rules` }); });
   if (A.nat) node('nat', 430, 110 + pub.length * 100, 160, 56, { icon: 'internet', title: 'NAT gateway', sub: `× ${A.nat} · outbound internet` });
   // App subnet: one box per ECS cluster with its services, then EC2.
@@ -1231,7 +1272,11 @@ function renderAwsArch() {
     items.forEach((r, i) => node('chip:' + r.n, CX + 8 + (i % 2) * (chipW + 6), y + 30 + Math.floor(i / 2) * (chipH + 5), chipW, chipH, { chip: true, res: r, parent: id }));
     y += h + 14;
   };
-  Object.entries(clusters).sort((a, b) => b[1].length - a[1].length).forEach(([c, items]) => chipBox('cl:' + c, `${items.some(isK8s) ? 'Kubernetes' : 'ECS'} · ${c}`, items, `${items.filter((r) => r.tasks).length} ${DESIGN ? 'planned' : 'running'}`));
+  const byRegion = multiRegion() && SCOPE.region === 'all', regionOf = (items) => String(items[0]?.region || '');
+  let lastRegion = null;
+  Object.entries(clusters).sort((a, b) => (byRegion ? regionOf(a[1]).localeCompare(regionOf(b[1])) : 0) || b[1].length - a[1].length).forEach(([c, items]) => {
+    if (byRegion && regionOf(items) !== lastRegion) { lastRegion = regionOf(items); node('rg:' + lastRegion, CX, y, CW, 18, { rlabel: true, title: `Region ${lastRegion || 'unknown'}` }); y += 22; }
+    chipBox('cl:' + c, `${items.some(isK8s) ? 'Kubernetes' : 'ECS'} · ${c}`, items, `${items.filter((r) => r.tasks).length} ${DESIGN ? 'planned' : 'running'}`); });
   if (ec2.length) chipBox('cl:ec2', 'EC2 servers', ec2, `${ec2.length} ${DESIGN ? 'planned' : 'running'}`, true);
   internal.forEach((l) => { node('lb:' + l.n, CX, y, CW, 56, { icon: 'alb', title: l.n, sub: l.source === 'kubernetes' ? `${l.k8s || 'Service'} · ${l.routes.length} routes` : DESIGN ? (l.source === 'compose' ? `internal ports · ${l.routes.length}` : 'internal ALB') : `internal ALB · ${n0(l.req)} req` }); y += 70; });
   const appBottom = y;
@@ -1267,6 +1312,7 @@ function renderAwsArch() {
   // Connections: routing rules, then each cluster's dependencies from its code.
   const e = (a, b, label, cls = '') => { if (N[a] && N[b] && a !== b && !E.some((x) => x.a === a && x.b === b)) E.push({ a, b, label, cls }); };
   e('users', 'r53', 'DNS lookup');
+  if (N.apigw && apiUsed) e('users', 'apigw', 'HTTPS');
   if (N.cf) e('users', 'cf', 'CDN'); if (N.apigw && N.lambda) e('apigw', 'lambda', 'invoke');
   const keyToRow = Object.fromEntries(INFRA.filter((r) => r.key).map((r) => [r.key, r]));
   lbs.forEach((l) => {
@@ -1292,6 +1338,15 @@ function renderAwsArch() {
     if (N.secrets) e('secrets', 'cl:' + c, 'config');
   });
   Object.entries(QUEUE_WORKER).forEach(([q, [w]]) => byName[w] && e('sqs', 'chip:' + w, q));
+  // Functions linked to code (model rows of kind lambda): what their code calls.
+  const fnRows = INFRA.filter((r) => isLambda(r) && inEnv(r.env));
+  const fnDirs = Object.entries(PLACEMENT).filter(([, v]) => v.compute.some((n) => fnRows.some((r) => r.n === n))).map(([k]) => k);
+  if (N.lambda) {
+    const exts = new Set();
+    (D?.files || []).forEach((f) => { if (fnDirs.some((k) => k === '.' || f.p.startsWith(k + '/'))) f.x.forEach((x) => exts.add(x)); });
+    exts.forEach((x) => { const tgt = EXT_NODE[x]; if (tgt && !['ext', 'chat'].includes(tgt)) e('lambda', tgt, EXTERNAL[x]?.n || x); });
+    fnDirs.forEach((k) => (QUEUES[k] || []).length && e('lambda', 'sqs', (QUEUES[k] || []).slice(0, 2).join(' · ')));
+  }
   // Lambda event source mappings and EventBridge rule targets.
   const ESM_NODE = { sqs: 'sqs', kinesis: 'kinesis', msk: 'msk', kafka: 'msk', dynamodb: 'ddb' };
   (A.esm || []).forEach((m) => e(ESM_NODE[m.kind] || '', 'lambda', 'event source'));
@@ -1300,12 +1355,14 @@ function renderAwsArch() {
   // Draw.
   const g = [];
   const zone = (x, y0, w, h, label, color, dash = '') => g.push(`<rect x="${x}" y="${y0}" width="${w}" height="${h}" rx="12" fill="none" stroke="${color}" stroke-width="1.2" ${dash ? `stroke-dasharray="${dash}"` : ''}/><text class="zone-t" x="${x + 14}" y="${y0 + 20}" fill="${color}">${label}</text>`);
-  zone(196, 26, W - 206, H - 40, `AWS Cloud · ${esc(M.meta.region)}`, 'var(--muted)');
+  const cloud = SCOPE.region !== 'all' ? SCOPE.region : multiRegion() ? `${REGIONS().length} regions` : M.meta.region;
+  zone(196, 26, W - 206, H - 40, `AWS Cloud · ${esc(cloud)}${SCOPE.account !== 'all' ? ' · ' + esc(SCOPE.account) : multiAccount() ? ` · ${ACCOUNTS().length} accounts` : ''}`, 'var(--muted)');
   zone(404, 52, 756, H - 80, 'VPC', 'var(--violet)');
   zone(418, 80, 186, H - 120, 'Public subnet', 'var(--signal)', '5 4');
   zone(608, 80, 344, H - 120, 'Private subnet · app', 'var(--blue)', '5 4');
   zone(958, 80, 194, H - 120, 'Private subnet · data', 'var(--blue)', '5 4');
   zone(1164, 52, 226, H - 80, 'AWS managed', 'var(--amber)', '2 4');
+  if (!ecs.length && !ec2.length && !lbs.length && !rds.length && !caches.length && !os.length) g.push(`<text x="778" y="330" text-anchor="middle" fill="var(--muted)" font-size="12">Nothing runs inside a VPC here: the requests go through API Gateway and Lambda.</text>`);
   const center = (n) => ({ x: n.x + n.w / 2, y: n.y + n.h / 2 });
   E.forEach((ed) => {
     const a = N[ed.a], b = N[ed.b], ca = center(a), cb = center(b);
@@ -1317,6 +1374,7 @@ function renderAwsArch() {
       ${lab ? `<rect class="lb" x="${lx - tw / 2}" y="${ly - 11}" width="${tw}" height="16" rx="4" fill="var(--panel)" stroke="var(--line)"/><text x="${lx}" y="${ly + 1}" text-anchor="middle" fill="var(--ink)" font-size="10">${esc(lab)}</text>` : ''}</g>`);
   });
   Object.values(N).forEach((n) => {
+    if (n.rlabel) { g.push(`<text x="${n.x + 2}" y="${n.y + 13}" fill="var(--violet)" font-size="11" font-weight="600">${esc(n.title)}</text>`); return; }
     if (n.chip) {
       const r = n.res, l = lvlOfRes(r);
       g.push(`<g class="an click" data-id="${esc(n.id)}" data-res="${esc(r.n)}"><rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="5" fill="var(--raise)" stroke="${l === 'ok' ? 'var(--line)' : DOT[l]}"/>
@@ -1339,7 +1397,7 @@ function renderAwsArch() {
   $('#aws-arch').innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="AWS architecture"><rect width="${W}" height="${H}" fill="var(--bg)"/>${g.join('')}</svg>`;
   ARCH_MAP = { N, E };
   const k8sN = ecs.filter((r) => r.tasks && isK8s(r)).length, ecsN = ecs.filter((r) => r.tasks && !isK8s(r)).length;
-  $('#arch-info').innerHTML = `${ecsN || !k8sN ? `<b>${ecsN}</b> ECS services, ` : ''}${k8sN ? `<b>${k8sN}</b> Kubernetes workloads, ` : ''}<b>${ec2.length}</b> EC2 servers${DESIGN ? ' (as planned in the files)' : ''} across <b>${Object.keys(clusters).length}</b> ${k8sN && !ecsN ? 'namespaces' : 'clusters'}. Hover over any box to see what it connects to; click a service for details.`;
+  $('#arch-info').innerHTML = `${fnRows.length ? `<b>${fnRows.length}</b> Lambda functions linked to code, ` : ''}${ecsN || !k8sN ? `<b>${ecsN}</b> ECS services, ` : ''}${k8sN ? `<b>${k8sN}</b> Kubernetes workloads, ` : ''}<b>${ec2.length}</b> EC2 servers${DESIGN ? ' (as planned in the files)' : ''} across <b>${Object.keys(clusters).length}</b> ${k8sN && !ecsN ? 'namespaces' : 'clusters'}. Hover over any box to see what it connects to; click a service for details.`;
 }
 let ARCH_MAP = null;
 function archHover(id) {
@@ -1362,8 +1420,8 @@ function archHover(id) {
 
 // ---------- AWS components ----------
 // meta is always escaped: it can carry strings read from infrastructure files. `pill` is trusted markup built by callers from constants.
-function comp(name, meta, { lvl = '', note = '', pill = '', idle = false } = {}) {
-  return `<div class="comp ${lvl} ${idle ? 'idle' : ''}">${pill}<span class="nm">${esc(name)}</span><span class="meta">${esc(meta)}</span>${note ? `<span class="note">${esc(note)}</span>` : ''}</div>`;
+function comp(name, meta, { lvl = '', note = '', pill = '', idle = false, at = null } = {}) {
+  return `<div class="comp ${lvl} ${idle ? 'idle' : ''}">${pill}${scopePill(at)}<span class="nm">${esc(name)}</span><span class="meta">${esc(meta)}</span>${note ? `<span class="note">${esc(note)}</span>` : ''}</div>`;
 }
 const n0 = (v) => Math.round(v).toLocaleString();
 function famTable(items, keyUsed, label) {
@@ -1405,8 +1463,8 @@ function edgeHtml() {
     const dead = lb.routes.filter((r) => r.services.length && r.services.every((s) => !INFRA.find((x) => x.key === s)?.tasks));
     const lvl = lb.req === 0 || DESIGN ? '' : lb.err > lb.req * 0.05 ? 'bad' : dead.length ? 'warn' : '';
     const note = DESIGN ? '' : lb.req === 0 ? 'No traffic in 3 days' : lb.err > lb.req * 0.05 ? `${n0(lb.err)} errors vs ${n0(lb.req)} ${lb.type === 'network' ? 'connections' : 'requests'}` : dead.length ? `${dead.length} rule(s) point at services with 0 tasks` : '';
-    if (lb.source === 'kubernetes') return comp(lb.n, `${lb.k8s || 'Kubernetes Service'} · ${lb.scheme}${lb.ingressClass ? ' · class ' + lb.ingressClass : ''} · ${lb.routes.length} rules`);
-    return comp(lb.n, `${lb.source === 'compose' ? 'Compose ports' : lb.type === 'application' ? 'ALB' : 'NLB'} · ${lb.scheme}${DESIGN ? '' : ` · ${n0(lb.req)} ${lb.type === 'network' ? 'flows' : 'req'} / 3d`} · ${lb.routes.length} rules`, { lvl, note, idle: lb.req === 0 && !DESIGN });
+    if (lb.source === 'kubernetes') return comp(lb.n, `${lb.k8s || 'Kubernetes Service'} · ${lb.scheme}${lb.ingressClass ? ' · class ' + lb.ingressClass : ''} · ${lb.routes.length} rules`, { at: lb });
+    return comp(lb.n, `${lb.source === 'compose' ? 'Compose ports' : lb.type === 'application' ? 'ALB' : 'NLB'} · ${lb.scheme}${DESIGN ? '' : ` · ${n0(lb.req)} ${lb.type === 'network' ? 'flows' : 'req'} / 3d`} · ${lb.routes.length} rules`, { lvl, note, idle: lb.req === 0 && !DESIGN, at: lb });
   }).join('');
   const rules = A.lb.filter((lb) => lb.type === 'application').flatMap((lb) => lb.routes.map((r) => ({ lb: lb.n, ...r })));
   const rows = rules.map((r) => {
@@ -1414,16 +1472,16 @@ function edgeHtml() {
     const zero = r.services.length && r.services.every((s) => !INFRA.find((x) => x.key === s)?.tasks);
     return `<tr><td class="rp">${esc(r.lb)}</td><td class="rp">${esc(r.when.replace(/host-header=/g, '').replace(/path-pattern=/g, 'path '))}</td><td class="rp">${esc(target)}${r.services.length ? '' : ' <span class="pill mute">EC2 / IP</span>'}${zero ? ' <span class="pill red">0 tasks</span>' : ''}</td></tr>`;
   }).join('');
-  const cdn = A.cdn.map((d) => comp(d.n, `CloudFront → ${d.origin.length > 20 ? 'Lambda URL' : d.origin}${d.aliases.length ? ' · ' + d.aliases.join(', ') : ''}`)).join('');
-  const apis = A.apigw.filter((a) => DESIGN || a.req > 0).map((a) => comp(a.n, DESIGN ? `API Gateway ${a.proto}` : `API Gateway ${a.proto} · ${n0(a.req)} req / 3d`)).join('');
+  const cdn = A.cdn.map((d) => comp(d.n, `CloudFront → ${d.origin.length > 20 ? 'Lambda URL' : d.origin}${d.aliases.length ? ' · ' + d.aliases.join(', ') : ''}`, { at: d.region === 'global' ? { account: d.account } : d })).join('');
+  const apis = A.apigw.filter((a) => DESIGN || a.req > 0).map((a) => comp(a.n, DESIGN ? `API Gateway ${a.proto}` : `API Gateway ${a.proto} · ${n0(a.req)} req / 3d`, { at: a })).join('');
   return `<div class="comp-grid">${lbCards}</div>
     <h3 style="margin:18px 0 8px">Routing rules: hostname and path → service</h3><div class="tbl"><table><thead><tr><th>Load balancer</th><th>When</th><th>Goes to</th></tr></thead><tbody>${rows}</tbody></table></div>
     <h3 style="margin:18px 0 8px">CDN and API gateways in use</h3><div class="comp-grid">${cdn}${apis}</div>
     ${DESIGN ? '' : `<p class="hint">${A.apigw.length - A.apigw.filter((a) => a.req > 0).length} of ${A.apigw.length} API gateways had no requests in 3 days.</p>`}`;
 }
 function computeHtml(lamUsed, ecsLive) {
-  const ec2 = INFRA.filter((r) => r.kind === 'ec2').map((r) => comp(r.n, `EC2 · ${r.size}${DESIGN ? '' : ` · CPU ${fmt(r.cpu)}%`}`, { lvl: r.lvl, note: r.note })).join('');
-  const lam = lamUsed.sort((a, b) => b.inv - a.inv).map((f) => comp(f.n, DESIGN ? `Lambda · ${f.mem} MB` : `Lambda · ${f.mem} MB · ${n0(f.inv)} calls · ${Math.round(f.dur)} ms avg${f.err ? ' · ' + f.err + ' errors' : ''}`, { lvl: f.err ? 'warn' : '' })).join('');
+  const ec2 = INFRA.filter((r) => r.kind === 'ec2').map((r) => comp(r.n, `EC2 · ${r.size}${DESIGN ? '' : ` · CPU ${fmt(r.cpu)}%`}`, { lvl: r.lvl, note: r.note, at: r })).join('');
+  const lam = lamUsed.sort((a, b) => b.inv - a.inv).map((f) => comp(f.n, DESIGN ? `Lambda · ${f.mem} MB` : `Lambda · ${f.mem} MB · ${n0(f.inv)} calls · ${Math.round(f.dur)} ms avg${f.err ? ' · ' + f.err + ' errors' : ''}`, { lvl: f.err ? 'warn' : '', at: f })).join('');
   return `<p class="hint" style="margin-top:0">${DESIGN ? `${ecsLive} ECS services are planned (see Overview). Servers and Lambda functions in the files:` : `${ecsLive} ECS containers are live (see Overview). Servers and the Lambda functions that actually ran:`}</p>
     <div class="comp-grid">${ec2}</div><h3 style="margin:18px 0 8px">${DESIGN ? 'Lambda functions' : 'Lambda functions invoked in the last 3 days'}</h3><div class="comp-grid">${lam}</div>
     ${DESIGN ? '' : '<h3 style="margin:18px 0 8px">Lambda families</h3>'}${DESIGN ? '' : `<div class="tbl"><table><thead><tr><th>Family</th><th style="text-align:right">Functions</th><th style="text-align:right">Invoked</th><th></th></tr></thead><tbody>${famTable(A.lambda, 'inv', 'all idle')}</tbody></table></div>`}
@@ -1431,13 +1489,13 @@ function computeHtml(lamUsed, ecsLive) {
 }
 function messagingHtml(sqsUsed) {
   const q = sqsUsed.sort((a, b) => b.sent - a.sent).map((x) => {
-    if (DESIGN) return comp(x.n, `SQS${x.fifo ? ' FIFO' : ''} · defined${x.redrive ? ' · redrive set' : ''}`, { pill: x.dlq ? '<span class="pill red">DLQ</span>' : '' });
+    if (DESIGN) return comp(x.n, `SQS${x.fifo ? ' FIFO' : ''} · defined${x.redrive ? ' · redrive set' : ''}`, { pill: x.dlq ? '<span class="pill red">DLQ</span>' : '', at: x });
     const stuck = x.backlog > 0 && x.age > 3600;
     const lvl = x.dlq && x.backlog > 0 ? 'bad' : stuck ? 'warn' : '';
     const note = x.dlq && x.backlog > 0 ? `${x.backlog} failed message(s), oldest ${Math.round(x.age / 3600)} h` : stuck ? `Backlog ${x.backlog}, oldest ${Math.round(x.age / 60)} min` : '';
-    return comp(x.n, `SQS${x.fifo ? ' FIFO' : ''} · ${n0(x.sent)} sent / 3d · backlog ${x.backlog}`, { lvl, note, pill: x.dlq ? '<span class="pill red">DLQ</span>' : x.n.startsWith('staging') ? '<span class="pill mute">staging</span>' : '<span class="pill">prod</span>' });
+    return comp(x.n, `SQS${x.fifo ? ' FIFO' : ''} · ${n0(x.sent)} sent / 3d · backlog ${x.backlog}`, { lvl, note, pill: x.dlq ? '<span class="pill red">DLQ</span>' : x.n.startsWith('staging') ? '<span class="pill mute">staging</span>' : '<span class="pill">prod</span>' , at: x });
   }).join('');
-  const sns = A.sns.map((t) => comp(t.n, DESIGN ? 'SNS topic' : `SNS · ${n0(t.published)} published / 3d`, { idle: !DESIGN && !t.published })).join('');
+  const sns = A.sns.map((t) => comp(t.n, DESIGN ? 'SNS topic' : `SNS · ${n0(t.published)} published / 3d`, { idle: !DESIGN && !t.published, at: t })).join('');
   const eb = A.eventbridge.map((r) => comp(r, 'EventBridge rule')).join('');
   return `<div class="comp-grid">${q}</div>
     ${DESIGN ? '' : `<h3 style="margin:18px 0 8px">Idle queue families</h3><div class="tbl"><table><thead><tr><th>Family</th><th style="text-align:right">Queues</th><th style="text-align:right">Active</th><th></th></tr></thead><tbody>${famTable(A.sqs, 'sent', 'all idle')}</tbody></table></div>
@@ -1446,10 +1504,10 @@ function messagingHtml(sqsUsed) {
 }
 function streamsHtml() {
   const sfn = A.sfn.map((m) => comp(m.n, `Step Functions ${m.type || ''}${DESIGN ? '' : ` · ${n0(m.started || 0)} started / 3d`} · calls ${(m.targets || []).map((t) => `${t.kind} ${t.n}`).slice(0, 4).join(', ') || 'nothing read'}`,
-    !DESIGN && m.failed > 0 ? { lvl: m.failed >= 5 ? 'bad' : 'warn', note: `${n0(m.failed)} executions failed in 3 days` } : {})).join('');
+    { at: m, ...(!DESIGN && m.failed > 0 ? { lvl: m.failed >= 5 ? 'bad' : 'warn', note: `${n0(m.failed)} executions failed in 3 days` } : {}) })).join('');
   const kin = A.kinesis.map((k) => comp(k.n, `Kinesis · ${k.mode || ''} · ${k.shards} shard${k.shards === 1 ? '' : 's'}${DESIGN ? '' : ` · ${n0(k.incoming || 0)} records / 3d`}`,
-    !DESIGN && k.iteratorAgeMs >= 60000 ? { lvl: k.iteratorAgeMs >= 3600000 ? 'bad' : 'warn', note: `Readers are ${Math.round(k.iteratorAgeMs / 60000)} min behind` } : {})).join('');
-  const msk = A.msk.map((m) => comp(m.n, `MSK ${m.type || ''} · ${m.brokers || 0} brokers${m.instance ? ' · ' + m.instance : ''}${m.version ? ' · Kafka ' + m.version : ''}`)).join('');
+    { at: k, ...(!DESIGN && k.iteratorAgeMs >= 60000 ? { lvl: k.iteratorAgeMs >= 3600000 ? 'bad' : 'warn', note: `Readers are ${Math.round(k.iteratorAgeMs / 60000)} min behind` } : {}) })).join('');
+  const msk = A.msk.map((m) => comp(m.n, `MSK ${m.type || ''} · ${m.brokers || 0} brokers${m.instance ? ' · ' + m.instance : ''}${m.version ? ' · Kafka ' + m.version : ''}`, { at: m })).join('');
   const esm = A.esm.map((m) => `<tr><td class="rp">${esc(m.source)}${(m.topics || []).length ? ` <span class="pill mute">${esc(m.topics.slice(0, 3).join(', '))}</span>` : ''}</td><td>${esc(m.kind)}</td><td class="rp">${esc(m.fn)}</td><td>${/^PROBLEM/.test(m.last || '') ? `<span class="pill red">${esc(m.last)}</span>` : /^Disabl/.test(m.state || '') ? '<span class="pill amber">disabled</span>' : esc(m.state)}</td></tr>`).join('');
   const eb = A.ebTargets.map((t) => `<tr><td class="rp">${esc(t.rule)}</td><td>${esc(t.kind)}</td><td class="rp">${esc(t.n)}</td></tr>`).join('');
   return `<div class="comp-grid">${sfn}${kin}${msk}</div>
@@ -1457,7 +1515,7 @@ function streamsHtml() {
     ${eb ? `<h3 style="margin:18px 0 8px">EventBridge rules and their targets</h3><div class="tbl"><table><thead><tr><th>Rule</th><th>Kind</th><th>Target</th></tr></thead><tbody>${eb}</tbody></table></div>` : ''}`;
 }
 function k8sHtml() {
-  const clusters = A.eks.map((c) => comp(c.n, `EKS ${c.version} · ${c.status} · ${(c.nodegroups || []).map((g) => `${g.n}: ${(g.types || []).join('/')} ${g.min}–${g.max}`).join('; ') || 'no node groups'}`)).join('');
+  const clusters = A.eks.map((c) => comp(c.n, `EKS ${c.version} · ${c.status} · ${(c.nodegroups || []).map((g) => `${g.n}: ${(g.types || []).join('/')} ${g.min}–${g.max}`).join('; ') || 'no node groups'}`, { at: c })).join('');
   const rows = INFRA.filter(isK8s).map((r) => `<tr><td class="rp">${esc(r.cluster)}</td><td class="rp">${esc(r.n)}${linkPill(r.n)}</td><td>${esc(r.workload || '')}</td><td class="num">${DESIGN ? esc(String(r.tasks)) : esc(`${r.tasks}`)}</td><td>${esc(hpaText(r).replace(' · ', ''))}</td><td class="rp">${esc(SYS_LABEL[r.sys] || (r.sys.startsWith('cluster:') ? 'no code linked' : r.sys))}</td></tr>`).join('');
   return `${clusters ? `<div class="comp-grid">${clusters}</div>` : ''}
     ${rows ? `<h3 style="margin:18px 0 8px">Workloads${DESIGN ? ' in the manifests' : ' running'}</h3><div class="tbl"><table><thead><tr><th>Namespace</th><th>Workload</th><th>Kind</th><th style="text-align:right">${DESIGN ? 'Replicas' : 'Ready'}</th><th>Autoscaling</th><th>Code</th></tr></thead><tbody>${rows}</tbody></table></div>` : ''}
@@ -1472,16 +1530,16 @@ function observedHtml() {
     ${miss ? `<h3 style="margin:18px 0 8px">Captured requests no scanned route serves</h3><ul class="hint">${miss}</ul>` : ''}`;
 }
 function dataHtml() {
-  const rds = INFRA.filter((r) => r.kind === 'rds').map((r) => comp(r.n, DESIGN ? `${r.size}` : `Aurora serverless · ${fmt(r.cpu)}% of max capacity`, { lvl: r.lvl, note: r.note })).join('');
-  const cache = A.cache.map((c) => comp(c.n, DESIGN ? `${c.engine} cache` : `${c.engine} · ${c.type} · CPU ${fmt(c.cpu)}% · mem ${fmt(c.mem)}% · ${n0(c.conns)} conns`)).join('');
+  const rds = INFRA.filter((r) => r.kind === 'rds').map((r) => comp(r.n, DESIGN ? `${r.size}` : `Aurora serverless · ${fmt(r.cpu)}% of max capacity`, { lvl: r.lvl, note: r.note, at: r })).join('');
+  const cache = A.cache.map((c) => comp(c.n, DESIGN ? `${c.engine} cache` : `${c.engine} · ${c.type} · CPU ${fmt(c.cpu)}% · mem ${fmt(c.mem)}% · ${n0(c.conns)} conns`, { at: c })).join('');
   const search = A.search.map((s) => comp(s.n, DESIGN ? 'OpenSearch domain' : `OpenSearch · ${s.type} × ${s.count} · CPU ${fmt(s.cpu)}% · ${s.freeGB} GB free`,
-    { lvl: s.n.startsWith('staging') ? 'warn' : '', note: s.n.startsWith('staging') ? 'Staging audit-log cluster runs 24×7' : '' })).join('');
+    { lvl: s.n.startsWith('staging') ? 'warn' : '', note: s.n.startsWith('staging') ? 'Staging audit-log cluster runs 24×7' : '', at: s })).join('');
   const ddb = A.dynamodb.map((t) => comp(t, 'DynamoDB table')).join('');
   const s3 = DESIGN && !A.s3.count ? '' : comp(`${A.s3.count} S3 buckets`, DESIGN ? 'defined in the files' : 'bucket names are not collected');
   return `<div class="comp-grid">${rds}${cache}${search}${ddb}${s3}</div>`;
 }
 function platformHtml() {
-  return `<div class="comp-grid">${A.cognito.map((p) => comp(p.n, 'Cognito user pool')).join('')}
+  return `<div class="comp-grid">${A.cognito.map((p) => comp(p.n, 'Cognito user pool', { at: p })).join('')}
     ${DESIGN && !A.ses.length ? '' : comp('Amazon SES', 'Sending domains: ' + A.ses.join(', '))}
     ${DESIGN ? '' : comp('NAT gateways', `${A.nat} available`)}
     ${DESIGN ? '' : comp('Secrets Manager', `${A.secrets} secrets`)}
@@ -1495,6 +1553,8 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') $('#drawer').hidden = true;
 });
 document.addEventListener('click', (e) => {
+  const sc = e.target.closest('[data-scope]');
+  if (sc) { SCOPE[sc.dataset.scope === 'account' ? 'account' : 'region'] = sc.dataset.val; renderScopeChips(); renderScoped(); return; }
   const res = e.target.closest('[data-res]'); if (res) { openRes(res.dataset.res); return; }
   const rt = e.target.closest('[data-route]');
   if (rt) { const i = +rt.dataset.route; $('#drawer').hidden = true; showView('trace'); if (!rt.classList.contains('cand')) renderCands([i], i); traceAndDraw(i); return; }
@@ -1516,7 +1576,7 @@ $('#aws-arch').addEventListener('mouseleave', () => archHover(null));
 ['env-prod', 'env-all'].forEach((id) => $('#' + id).addEventListener('click', () => {
   ARCH_ENV = id === 'env-all' ? 'all' : 'prod';
   $('#env-prod').setAttribute('aria-pressed', ARCH_ENV === 'prod'); $('#env-all').setAttribute('aria-pressed', ARCH_ENV === 'all');
-  renderAwsArch();
+  inScopeView(renderAwsArch);
 }));
 $('#voice-rate').value = String(VOICE_RATE);
 $('#voice-pick').addEventListener('change', (e) => {
@@ -1675,8 +1735,9 @@ Promise.all([load('code.json', null), load('aws.json', null), load('flows.json',
   const maxSpend = Math.max(1, ...SPEND.map((s) => s[1]));
   $('#spend tbody').innerHTML = SPEND.map(([n, c]) => `<tr><td>${esc(n)}</td><td style="width:40%"><div class="costbar" style="width:${(c / maxSpend) * 100}%"></div></td><td class="num">${c.toFixed(2)}</td></tr>`).join('');
   $('#savings tbody').innerHTML = SAVINGS.length ? SAVINGS.map(([n, s]) => `<tr><td>${esc(n)}</td><td class="num">${esc(s)}</td></tr>`).join('') : '<tr><td colspan="2" class="hint">No savings found.</td></tr>';
-  if (A) { renderComponents(); renderAwsArch(); }
-  renderOps(); renderOverview(); renderTree(); renderTimeline();
+  renderScopeChips();
+  if (A) { inScopeView(renderComponents); inScopeView(renderAwsArch); }
+  renderOps(); inScopeView(renderOverview); renderTree(); renderTimeline();
   if (START_VIEW === 'timeline') showView('timeline');
   $('#cat-count').textContent = `${d.routes.length} APIs by system`;
   const top = D.modules.find((m) => m.parent === null && m.files > 0); if (top) showModule(top.id);

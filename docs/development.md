@@ -13,7 +13,7 @@ skills/hopscope/
   scripts/langs/         one module per language the code scanner reads (the plugin interface below)
   assets/console.html    the console page
   references/            IAM policy, hopscope.json reference
-docs/                    documentation, images, and the live demo (docs/demo)
+docs/                    documentation, images, and the live demos (docs/demo, docs/demo-k8s, docs/demo-serverless)
 tests/                   pytest suite with synthetic repos and inventories
 ```
 
@@ -25,7 +25,7 @@ $PY -m mypy --ignore-missing-imports skills/hopscope/scripts
 $PY -m pytest tests --cov=skills/hopscope/scripts
 ```
 
-Tests never touch a real AWS account. The demo in `docs/demo` is a fictional company, Kestrel Coffee: its code, AWS setup, traffic and cost are all invented. `python docs/demo/make_demo.py` rebuilds it by running Hopscope's own pipeline over a small invented codebase (with a Terraform file) and AWS inventory, three times at invented build times so the demo has snapshots, deploys and drift; never build the demo from a real account.
+Tests never touch a real AWS account. The demo in `docs/demo` is a fictional company, Kestrel Coffee: its code, AWS setup, traffic and cost are all invented. `python docs/demo/make_demo.py` rebuilds it by running Hopscope's own pipeline over a small invented codebase (with a Terraform file) and AWS inventory, three times at invented build times so the demo has snapshots, deploys and drift; never build the demo from a real account. `python docs/demo-k8s/make_k8s.py` builds Kestrel Coffee on Kubernetes (invented `kubectl get` output through the live Kubernetes mapper, two builds) and `python docs/demo-serverless/make_serverless.py` a serverless Kestrel Coffee in two regions (two invented regional inventories merged by `aws_merge`). Each demo folder holds its own `index.html`: the console template between the same head and closing tags `hopscope.py build` writes, so after changing `assets/console.html` re-embed it in every `docs/demo*/index.html`.
 
 ## Adding a language
 
@@ -36,8 +36,8 @@ module defines:
 | Name | What it is |
 |---|---|
 | `NAME`, `EXTENSIONS` | the language id and the file suffixes it reads |
-| `SERVICE_MARKERS` | files that mark a deployable folder (`go.mod`, `pom.xml`, `*.csproj`; globs allowed) |
-| `routes(path, text, ctx)` | the API routes in one file: `{"m", "p", "t", "d", "l"}` (method, path, title, description, line) |
+| `SERVICE_MARKERS` | files that mark a deployable folder (`go.mod`, `pom.xml`, `*.csproj`, `Gemfile`, `composer.json`, `Cargo.toml`; globs allowed) |
+| `routes(path, text, ctx)` | the API routes in one file: `{"m", "p", "t", "d", "l"}` (method, path, title, description, line); a route may carry `"f"` (a file index) when its handler is in another file, and `"l"` is then the handler's line |
 | `imports(path, text, ctx)` | indices of the scanned files it imports (`ctx.index` maps a resolved path to its index) |
 | `externals(text, ctx)` | the external systems it talks to, as console keys (`postgres`, `sqs`, `kafka`, …) |
 | optional `prepare(files)` | one pass over all of the language's files first (e.g. a package index); its result is `ctx.state` |

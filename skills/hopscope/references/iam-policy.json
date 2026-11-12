@@ -5,7 +5,7 @@
       "Sid": "OpsConsoleReadOnly",
       "Effect": "Allow",
       "Action": [
-        "sts:GetCallerIdentity",
+        "sts:GetCallerIdentity", "iam:ListAccountAliases", "ec2:DescribeRegions",
         "cloudwatch:GetMetricData",
         "ce:GetCostAndUsage",
         "ecs:ListClusters", "ecs:ListServices", "ecs:DescribeServices", "ecs:DescribeTaskDefinition", "ecs:ListTaskDefinitions",

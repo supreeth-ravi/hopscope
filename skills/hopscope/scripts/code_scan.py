@@ -212,7 +212,7 @@ def scan(repos: list[Path]) -> CodeMap:
         cm.files.append({"p": rel(f), "m": mid, "t": humanize(f.stem), "d": "", "x": sorted(lang.externals(src, ctx)), "loc": src.count("\n") + 1})
         for r in routes:
             if r["m"] in METHODS:
-                cm.routes.append({**r, "f": i})
+                cm.routes.append({"f": i, **r})  # "f" from the language: the handler is in another file
         cm.links += [[i, j, 0, ""] for j in links if j != i]
         st = module_stats.setdefault(mid, {"files": 0, "loc": 0, "service": sid})
         st["files"] += 1

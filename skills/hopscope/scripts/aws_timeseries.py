@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 from datetime import date, timedelta
+from typing import Any
 
 from awsutil import env_of, metric_hourly, session
 
@@ -31,14 +32,8 @@ def pick(inv: dict) -> dict:
             "mem": hot[0] if hot else None, "queues": [q["n"] for q in queues[:3]]}
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--aws", required=True)
-    ap.add_argument("--profile")
-    ap.add_argument("--out", required=True)
-    a = ap.parse_args()
-    inv = json.load(open(a.aws))
-    s = session(a.profile, inv["region"])
+def hourly(s: Any, inv: dict) -> dict:
+    """ts.json without the daily cost: the hourly series of what pick() chose, from one region's session."""
     cw, elb = s.client("cloudwatch"), s.client("elbv2")
     p = pick(inv)
     Q: dict[str, tuple] = {}
@@ -71,19 +66,35 @@ def main() -> None:
     health = {r["tg"]: r["targets"] for lb_ in inv["lb"] if lb_["n"] == p["lb"] for r in lb_["routes"]}
     for x in by_service:
         x["targets"] = health.get(x["tg"], [])
-    daily: list[dict] = []
+    labels = {"lb": p["lb"], "db": db["n"] if db else None, "dbKind": ("acu" if db and db["serverless"] else "cpu"), "dbMax": (db or {}).get("maxAcu"),
+              "mem": f'{p["mem"]["n"]}' if p["mem"] else None, "queues": p["queues"]}
+    return {"start": start, "hours": 72, "labels": labels, "series": series, "byService": by_service}
+
+
+def daily_cost(s: Any) -> list[dict]:
+    """14 days of spend before tax, from Cost Explorer (global, once per account); [] when it is disabled or denied."""
     try:
         ce = s.client("ce", region_name="us-east-1")
         today = date.today()
         cost = ce.get_cost_and_usage(TimePeriod={"Start": str(today - timedelta(days=14)), "End": str(today)}, Granularity="DAILY",
                                      Metrics=["UnblendedCost"], Filter={"Not": {"Dimensions": {"Key": "RECORD_TYPE", "Values": ["Tax"]}}})
-        daily = [{"d": r["TimePeriod"]["Start"], "usd": round(float(r["Total"]["UnblendedCost"]["Amount"]), 2)} for r in cost["ResultsByTime"]]
+        return [{"d": r["TimePeriod"]["Start"], "usd": round(float(r["Total"]["UnblendedCost"]["Amount"]), 2)} for r in cost["ResultsByTime"]]
     except Exception as e:  # noqa: BLE001 - Cost Explorer may be disabled; the chart is then hidden
         print(f"warning: daily cost skipped ({type(e).__name__})")
-    labels = {"lb": p["lb"], "db": db["n"] if db else None, "dbKind": ("acu" if db and db["serverless"] else "cpu"), "dbMax": (db or {}).get("maxAcu"),
-              "mem": f'{p["mem"]["n"]}' if p["mem"] else None, "queues": p["queues"]}
-    json.dump({"start": start, "hours": 72, "labels": labels, "series": series, "byService": by_service, "dailyCost": daily}, open(a.out, "w"), separators=(",", ":"))
-    print(f"time series: {len(series)} series ({', '.join(f'{k}={v}' for k, v in labels.items() if v)}) -> {a.out}")
+        return []
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--aws", required=True)
+    ap.add_argument("--profile")
+    ap.add_argument("--out", required=True)
+    a = ap.parse_args()
+    inv = json.load(open(a.aws))
+    s = session(a.profile, inv["region"])
+    out = {**hourly(s, inv), "dailyCost": daily_cost(s)}
+    json.dump(out, open(a.out, "w"), separators=(",", ":"))
+    print(f"time series: {len(out['series'])} series ({', '.join(f'{k}={v}' for k, v in out['labels'].items() if v)}) -> {a.out}")
 
 
 if __name__ == "__main__":

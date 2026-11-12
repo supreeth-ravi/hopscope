@@ -33,7 +33,7 @@ import hopscope_query as q
 
 LATEST = "2025-06-18"
 SUPPORTED = (LATEST, "2025-03-26", "2024-11-05")
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 MAX_LINE = 1_000_000  # bytes; a request longer than this is refused unread
 
 INSTRUCTIONS = ("Hopscope maps this project's code onto its AWS setup (or its compose/Terraform/CloudFormation files). "

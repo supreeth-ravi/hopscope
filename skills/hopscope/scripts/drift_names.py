@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import re
 
+from scopes import plain
+
 ENV_WORDS = {"prod", "production", "prd", "live", "staging", "stage", "stg", "dev", "develop", "development", "test", "testing", "qa", "uat",
              "sandbox", "preview", "default"}
 KINDS = {"ecs": "ECS service", "sqs": "queue", "rds": "database", "lambda": "Lambda", "cache": "cache", "lb": "load balancer"}
@@ -11,7 +13,8 @@ MAX_NAMES = 5
 
 
 def words(name: str) -> list[str]:
-    return [w for w in re.split(r"[^a-z0-9]+", re.sub(r"\.fifo$", "", str(name).lower())) if w]
+    """Name words, without a merged inventory's region or account prefix ("eu-west-1:orders" is the orders queue)."""
+    return [w for w in re.split(r"[^a-z0-9]+", re.sub(r"\.fifo$", "", plain(name).lower())) if w]
 
 
 def canon(name: str) -> list[str]:
@@ -22,7 +25,7 @@ def canon(name: str) -> list[str]:
 def level(a: str, b: str) -> str | None:
     """How alike two names are: exact, env (equal once environment words and numbers go), prefix (one is the other's
     tail), low (words mostly shared), or None."""
-    if a == b:
+    if a == b or plain(a) == plain(b):
         return "exact"
     ca, cb = canon(a), canon(b)
     if ca == cb:

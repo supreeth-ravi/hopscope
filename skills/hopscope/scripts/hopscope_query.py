@@ -488,7 +488,7 @@ def impact(data: dict, path: str) -> dict:
 
 
 def _row(data: dict, r: dict, design: bool) -> dict:
-    keep = ("n", "kind", "env", "sys", "size", "tasks", "cluster") + (() if design else METRIC_FIELDS)
+    keep = ("n", "kind", "env", "sys", "size", "tasks", "cluster", "region", "account") + (() if design else METRIC_FIELDS)
     out = {k: (clip(r[k]) if isinstance(r[k], str) else r[k]) for k in keep if k in r}
     out["status"] = clip(r.get("lvl") or "ok")
     if r.get("note"):
@@ -503,7 +503,7 @@ def _row(data: dict, r: dict, design: bool) -> dict:
 def _aws_counts(aws: dict) -> dict[str, int]:
     out = {}
     for k, v in sorted(aws.items()):
-        if k in ("collectedAt", "region", "account", "mode", "cost", "skipped"):
+        if k in ("collectedAt", "region", "account", "mode", "cost", "skipped", "regions", "accounts", "scopes", "skippedScopes", "where", "counts"):
             continue
         n = len(v) if isinstance(v, list) else v.get("count", v.get("total", len(v))) if isinstance(v, dict) else v if isinstance(v, int) else None
         if isinstance(n, int):

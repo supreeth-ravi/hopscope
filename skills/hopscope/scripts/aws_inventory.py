@@ -254,7 +254,14 @@ def collect_lb(s: Any, cw: Any, ecs_services: list[dict]) -> list[dict]:
     return out
 
 
-def collect_misc(s: Any, cw: Any) -> dict:
+def collect_global(s: Any) -> dict:
+    """CloudFront distributions and the S3 bucket count: global services, read once per account."""
+    cf = s.client("cloudfront").list_distributions().get("DistributionList", {}).get("Items", [])
+    return {"cdn": [{"n": d.get("Comment") or d["Id"], "origin": d["Origins"]["Items"][0]["DomainName"].split(".")[0], "aliases": d.get("Aliases", {}).get("Items", [])} for d in cf],
+            "s3": {"count": len(s.client("s3").list_buckets()["Buckets"])}}
+
+
+def collect_misc(s: Any, cw: Any, include_global: bool = True) -> dict:
     out: dict[str, Any] = {}
     sns = [t["TopicArn"].rsplit(":", 1)[1] for t in paginate(s.client("sns"), "list_topics", "Topics")]
     m = metric_totals(cw, [(f"t{i}", "AWS/SNS", "NumberOfMessagesPublished", {"TopicName": t}, "Sum") for i, t in enumerate(sns)])
@@ -286,10 +293,12 @@ def collect_misc(s: Any, cw: Any) -> dict:
                       [(f"r{i}", "AWS/ApiGateway", "Count", {"ApiName": a["name"]}, "Sum") for i, a in enumerate(rest)])
     out["apigw"] = [{"n": a["Name"], "proto": a["ProtocolType"], "req": m.get(f"h{i}", 0), "fam": family(a["Name"])} for i, a in enumerate(apis)] + \
                    [{"n": a["name"], "proto": "REST", "req": m.get(f"r{i}", 0), "fam": family(a["name"])} for i, a in enumerate(rest)]
-    cf = s.client("cloudfront").list_distributions().get("DistributionList", {}).get("Items", [])
-    out["cdn"] = [{"n": d.get("Comment") or d["Id"], "origin": d["Origins"]["Items"][0]["DomainName"].split(".")[0], "aliases": d.get("Aliases", {}).get("Items", [])} for d in cf]
+    glob = collect_global(s) if include_global else {}
+    if glob:
+        out["cdn"] = glob["cdn"]
     out["cognito"] = [{"n": p["Name"]} for p in s.client("cognito-idp").list_user_pools(MaxResults=50)["UserPools"]]
-    out["s3"] = {"count": len(s.client("s3").list_buckets()["Buckets"])}
+    if glob:  # the same key order as before global services were split out
+        out["s3"] = glob["s3"]
     ec2 = s.client("ec2")
     out["nat"] = len(ec2.describe_nat_gateways(Filters=[{"Name": "state", "Values": ["available"]}])["NatGateways"])
     addrs = ec2.describe_addresses()["Addresses"]
@@ -320,8 +329,45 @@ def safe(name: str, fn: Any, *args: Any) -> Any:
     try:
         return fn(*args)
     except Exception as e:  # noqa: BLE001 - report and keep going
-        print(f"warning: {name} skipped ({type(e).__name__}: {str(e)[:120]})")
+        print(f"warning: {name} skipped ({type(e).__name__}: {mask_numbers(str(e))[:120]})")  # AccessDenied names the caller's ARN
         return None
+
+
+def counting(failures: list[str]) -> Any:
+    """safe() that also records each collector it runs (an empty string) or why it failed, masked."""
+    def run(name: str, fn: Any, *args: Any) -> Any:
+        try:
+            out = fn(*args)
+            failures.append("")
+            return out
+        except Exception as e:  # noqa: BLE001 - report and keep going
+            why = f"{name}: {type(e).__name__}: {mask_numbers(str(e))[:120]}"
+            print(f"warning: {name} skipped ({why.split(': ', 1)[1]})")
+            failures.append(why)
+            return None
+    return run
+
+
+def regional(s: Any, staging: str | None, kube: list[str] | None = None, include_global: bool = True, failures: list[str] | None = None) -> dict:
+    """Everything one region holds, as aws.json rows; global services (CloudFront, S3, cost) only with include_global.
+    With `failures`, each collector appends "" when it ran and its masked reason when it failed."""
+    sf = counting(failures) if failures is not None else safe
+    cw = sf("cloudwatch", s.client, "cloudwatch")
+    ecs = sf("ecs", collect_ecs, s, cw, staging) or []
+    out = {"ecs": ecs, "ec2": sf("ec2", collect_ec2, s, cw, staging) or [], "rds": sf("rds", collect_rds, s, cw, staging) or [],
+           "lb": sf("load balancers", collect_lb, s, cw, ecs) or [], "sqs": sf("sqs", collect_sqs, s, cw) or [],
+           "lambda": sf("lambda", collect_lambda, s, cw) or []}
+    if include_global:
+        out["cost"] = sf("cost explorer", collect_cost, s) or []
+    out.update(sf("other services", collect_misc, s, cw, include_global) or {})
+    import aws_eks  # imported here: they build on this module's masking helpers
+    import aws_streams
+
+    aws_streams.add_to(out, s, cw, sf)
+    aws_eks.add_to(out, s, kube or [], sf)
+    for x in ecs:  # target-group ARNs carry the account number; only their names are needed after linking
+        x["tgs"] = [t.split("/")[-2] if "/" in t else t for t in x["tgs"]]
+    return out
 
 
 def main() -> None:
@@ -334,26 +380,16 @@ def main() -> None:
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
     s = session(a.profile, a.region)
-    cw = s.client("cloudwatch")
     try:
         ident = s.client("sts").get_caller_identity()
     except Exception as e:  # noqa: BLE001 - any credential failure gets the same fix
         raise SystemExit(f"AWS sign-in needed ({type(e).__name__}). Run `aws login` (or `aws sso login --profile …`) and try again.") from e
-    ecs = safe("ecs", collect_ecs, s, cw, a.staging_pattern) or []
-    out = {"collectedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"), "region": a.region, "account": ident["Account"][-4:].rjust(12, "•"),
-           "ecs": ecs, "ec2": safe("ec2", collect_ec2, s, cw, a.staging_pattern) or [], "rds": safe("rds", collect_rds, s, cw, a.staging_pattern) or [],
-           "lb": safe("load balancers", collect_lb, s, cw, ecs) or [], "sqs": safe("sqs", collect_sqs, s, cw) or [],
-           "lambda": safe("lambda", collect_lambda, s, cw) or [], "cost": safe("cost explorer", collect_cost, s) or []}
-    out.update(safe("other services", collect_misc, s, cw) or {})
-    import aws_eks  # imported here: they build on this module's masking helpers
-    import aws_streams
+    import aws_eks
 
-    aws_streams.add_to(out, s, cw, safe)
-    aws_eks.add_to(out, s, aws_eks.contexts(a.kube_context, a.kube_contexts), safe)
-    for x in ecs:  # target-group ARNs carry the account number; only their names are needed after linking
-        x["tgs"] = [t.split("/")[-2] if "/" in t else t for t in x["tgs"]]
+    out = {"collectedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"), "region": a.region, "account": ident["Account"][-4:].rjust(12, "•"),
+           **regional(s, a.staging_pattern, aws_eks.contexts(a.kube_context, a.kube_contexts))}
     json.dump(out, open(a.out, "w"), separators=(",", ":"))
-    print(f"aws inventory: {len(ecs)} ECS services, {len(out['ec2'])} EC2, {len(out['rds'])} databases, {len(out['lb'])} load balancers, "
+    print(f"aws inventory: {len(out['ecs'])} ECS services, {len(out['ec2'])} EC2, {len(out['rds'])} databases, {len(out['lb'])} load balancers, "
           f"{len(out['sqs'])} queues, {len(out['lambda'])} Lambdas -> {a.out}")
 
 

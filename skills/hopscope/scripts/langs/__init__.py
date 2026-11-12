@@ -8,8 +8,10 @@ Required
   SERVICE_MARKERS: tuple[str, ...]  file names that mark a service folder; "*" globs allowed ("*.csproj")
   routes(path, text, ctx) -> list[dict]
                                     API routes defined in the file: {"m": method, "p": path, "t": title, "d": description,
-                                    "l": line}. Methods outside code_scan.METHODS are dropped by the driver. ctx (see
-                                    imports) may be None.
+                                    "l": line}, plus "f" (a file index) when the handler lives in another file (a Rails
+                                    or Laravel route file naming a controller action; "l" is then the handler's line).
+                                    Methods outside code_scan.METHODS are dropped by the driver. ctx (see imports) may be
+                                    None.
   imports(path, text, ctx) -> list[int]
                                     indices of the scanned files this file imports (ctx.index maps a resolved path to its
                                     index; ctx.root is the file's service folder, ctx.repo its repository)
@@ -42,9 +44,9 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-from langs import csharp, go, java, js, python
+from langs import csharp, go, java, js, php, python, ruby, rust
 
-LANGUAGES: tuple[ModuleType, ...] = (python, js, go, java, csharp)
+LANGUAGES: tuple[ModuleType, ...] = (python, js, go, java, csharp, ruby, php, rust)
 GENERIC_MARKERS = ("Dockerfile",)
 
 

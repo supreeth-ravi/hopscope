@@ -16,10 +16,12 @@ from pathlib import Path
 import drift
 import history
 import rules_streams
+from scopes import scoped
 
 THRESHOLDS = {"err_pct_critical": 5.0, "mem_critical": 85.0, "mem_warn": 75.0, "cpu_warn": 85.0, "db_pinned_hours": 12, "db_cpu_critical": 90.0,
               "single_ec2_share": 0.25, "queue_age_warn_s": 3600, "ecr_repos_warn": 200}
 EBS_GB_MONTH, IDLE_ALB_MONTH, EIP_MONTH = 0.09, 18.0, 3.6
+STAGING_WORD = re.compile(r"(^|[-_.:])(stag|staging|stg|dev|test|qa)([-_.]|$)", re.I)
 
 
 def fmt_n(v: float) -> str:
@@ -42,29 +44,39 @@ def infra_entries(inv: dict, links: dict) -> tuple[list[dict], dict[str, str]]:
     design = inv.get("mode") == "design"
     rows: list[dict] = []
     counts: dict[str, int] = {}
+    prod: dict[str, int] = {}
     for x in inv["ecs"]:
         counts[x["n"]] = counts.get(x["n"], 0) + 1
+        prod[x["n"]] = prod.get(x["n"], 0) + (x["env"] == "prod")
     for x in inv["ecs"]:
         key = f'{x["cluster"]}/{x["n"]}'
         sys_id = placed.get(key) or f"cluster:{x['cluster']}"
         labels.setdefault(sys_id, x["cluster"] if sys_id.startswith("cluster:") else sys_id)
-        # Same service name in two clusters (prod and staging copies): keep prod's plain name.
-        name = x["n"] if counts[x["n"]] == 1 or x["env"] == "prod" else f'{x["n"]} ({x["cluster"]})'
+        # Same service name in two clusters (prod and staging copies): keep prod's plain name, unless several regions or
+        # accounts each run a production copy.
+        name = x["n"] if counts[x["n"]] == 1 or (x["env"] == "prod" and prod[x["n"]] == 1) else f'{x["n"]} ({x["cluster"]})'
         rows.append({"n": name, "key": key, "sys": sys_id, "kind": "ecs", "env": x["env"], "cpu": round(x["cpu"], 2) if x["running"] else 0,
                      "mem": round(x["mem"], 1) if x["running"] and not design else None, "memMax": x["memMax"], "size": x["size"] or (f'planned in {x.get("source") or "files"}' if design else "Fargate"),
-                     "cluster": x["cluster"], "tasks": x["running"], **({"src": "kubernetes", "workload": x.get("workload"), "hpa": x.get("hpa")} if x.get("source") == "kubernetes" else {})})
+                     "cluster": x["cluster"], "tasks": x["running"], **scoped(x), **({"src": "kubernetes", "workload": x.get("workload"), "hpa": x.get("hpa")} if x.get("source") == "kubernetes" else {})})
     for e in inv["ec2"]:
         if e["state"] != "running":
             continue
         rows.append({"n": e["n"], "sys": "servers" if e["env"] == "prod" else "staging", "kind": "ec2", "env": e["env"], "cpu": round(e["cpu"], 1),
-                     "mem": None, "size": e["type"], "credits": e["credits"], "creditMin": e["creditMin"], "surplus": e["surplus"]})
+                     "mem": None, "size": e["type"], "credits": e["credits"], "creditMin": e["creditMin"], "surplus": e["surplus"], **scoped(e)})
     labels.setdefault("servers", "EC2 servers")
     labels.setdefault("staging", "Staging and dev servers")
     for d in inv["rds"]:
         cap = (100 * d["acu"] / d["maxAcu"]) if d["serverless"] and d["maxAcu"] else d["cpu"]
         rows.append({"n": d["n"], "sys": "data", "kind": "rds", "env": d["env"], "cpu": round(cap, 1), "mem": None, "conns": d["conns"],
-                     "size": db_size(d)})
+                     "size": db_size(d), **scoped(d)})
     labels.setdefault("data", "Databases")
+    fns = {f["n"]: f for f in inv.get("lambda") or [] if isinstance(f, dict)}
+    for n, p in (links.get("lambdas") or {}).items():  # functions linked to code (linker_lambda): a trace runs through them
+        f = fns.get(n)
+        if f:
+            labels.setdefault(p["code"], p["code"])
+            rows.append({"n": n, "key": f"lambda:{n}", "sys": p["code"], "kind": "lambda", "env": "staging" if STAGING_WORD.search(n) else "prod",
+                         "cpu": 0, "mem": None, "size": f'Lambda · {f.get("mem") or "?"} MB', "inv": f.get("inv", 0), "err": f.get("err", 0), **scoped(f)})
     return rows, labels
 
 
@@ -148,7 +160,7 @@ def evaluate(inv: dict, ts: dict, links: dict, rows: list[dict], th: dict) -> tu
         if q["dlq"] and q["backlog"] > 0:
             actions.append(["bad", f'{q["backlog"]:.0f} failed message(s) in {q["n"]}', f'The oldest has waited {q["age"] / 3600:.0f} hours.', "Inspect them, fix the cause, then redrive."])
             rows.append({"n": q["n"], "sys": "data", "kind": "sqs", "env": "staging" if re.search(r"stag|dev|test", q["n"]) else "prod", "cpu": 0, "size": "SQS dead-letter queue",
-                         "lvl": "bad", "note": f'{q["backlog"]:.0f} failed message(s), oldest {q["age"] / 3600:.0f} h'})
+                         "lvl": "bad", "note": f'{q["backlog"]:.0f} failed message(s), oldest {q["age"] / 3600:.0f} h', **scoped(q)})
         elif not q["dlq"] and q["backlog"] > 0 and q["age"] > th["queue_age_warn_s"]:
             actions.append(["warn", f'{q["n"]} is backing up', f'{q["backlog"]:.0f} waiting, oldest {q["age"] / 60:.0f} min.', "Check that its worker is running and keeping up."])
     # Servers.
@@ -268,7 +280,8 @@ def main() -> None:
               "detail": f"{len(crit)} critical · {sum(1 for x in actions if x[0] == 'warn')} warnings" + ("" if design else f" · {len(savings)} savings found")}
     by_key = {row["key"]: row for row in rows if row.get("key")}
     placement: dict[str, dict] = {}
-    for key, p in sorted(links["placement"].items(), key=lambda kv: (by_key.get(kv[0], {}).get("env") != "prod", -kv[1]["confidence"])):
+    linked = {**links["placement"], **{f"lambda:{n}": p for n, p in (links.get("lambdas") or {}).items()}}
+    for key, p in sorted(linked.items(), key=lambda kv: (kv[0].startswith("lambda:"), by_key.get(kv[0], {}).get("env") != "prod", -kv[1]["confidence"])):
         if key in by_key:  # production copies first, so traces land on prod
             placement.setdefault(p["code"], {"sys": p["code"], "compute": []})["compute"].append(by_key[key]["n"])
     model = {"meta": {"mode": inv.get("mode", "live"), "region": inv["region"], "account": inv.get("account"), "collectedAt": inv["collectedAt"], "codeSource": code.get("source"),

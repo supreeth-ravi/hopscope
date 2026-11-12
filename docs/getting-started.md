@@ -38,6 +38,35 @@ $PY skills/hopscope/scripts/hopscope.py review
 $PY skills/hopscope/scripts/hopscope.py serve
 ```
 
+### Several regions or accounts
+
+```bash
+$PY skills/hopscope/scripts/hopscope.py all --region eu-west-1,us-east-1 --repo ~/src/shop      # named regions
+$PY skills/hopscope/scripts/hopscope.py all --all-regions --repo ~/src/shop                     # every region enabled for the account
+$PY skills/hopscope/scripts/hopscope.py all --region eu-west-1 --profile prod,shared --repo …   # one account per profile
+```
+
+Regions are read four at a time; a region with nothing in it is left out, and one that fails is skipped with a warning. The console gets a region (and account) filter, every card says where it runs, and the architecture groups clusters by region. Accounts are shown by their alias, or as `acct-••••1234` when the role may not read it; the account number itself is never written anywhere. When two regions or accounts use the same name (a `kestrel` cluster in both regions), both get a prefix such as `eu-west-1:kestrel`; use that name in `hopscope.json` placement.
+
+**Every account in an organization (opt-in).** Sign in to the management account (or a delegated administrator) and run:
+
+```bash
+$PY skills/hopscope/scripts/hopscope.py all --all-regions --org-role HopscopeReadOnly [--accounts 111122223333,444455556666] --repo …
+```
+
+Hopscope lists the organization's active accounts (`organizations:ListAccounts`) and assumes `arn:aws:iam::<id>:role/HopscopeReadOnly` in each with `sts:AssumeRole` (session name `hopscope`, one hour). Set that role up once per account:
+
+1. Create a role named, for example, `HopscopeReadOnly` in each member account and attach [`iam-policy.json`](../skills/hopscope/references/iam-policy.json) to it as its only permissions policy (read-only: Describe/List/Get, CloudWatch metrics, Cost Explorer, plus `iam:ListAccountAliases` and `ec2:DescribeRegions`). StackSets can create it in every account.
+2. Let the account you run Hopscope from assume it (the role's trust policy):
+
+   ```json
+   {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::<management-account-id>:root"}, "Action": "sts:AssumeRole"}]}
+   ```
+
+3. Give the identity you run Hopscope as `organizations:ListAccounts` and `sts:AssumeRole` on `arn:aws:iam::*:role/HopscopeReadOnly`.
+
+Each AssumeRole call also passes an inline session policy listing only the read actions of `iam-policy.json`, so the session can't do more than read even if the role allows more. An account without the role, or one that refuses, is skipped with a warning naming only its masked label. `--accounts` limits the run to those ids; `--org-role` takes at most one `--profile` (the account that lists the organization). If no region or account could be read at all, the run stops with the reasons instead of building an empty console. With `--kube-context`, each context is its own scope in the filter (`kube:<context>`).
+
 ### Kubernetes on EKS
 
 The inventory lists your EKS clusters and node groups. To also read the workloads, name the kubeconfig context (as `kubectl config get-contexts` shows it):

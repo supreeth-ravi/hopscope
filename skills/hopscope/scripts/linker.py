@@ -19,7 +19,9 @@ from pathlib import Path
 
 from iac_common import mask_numbers
 from langs.common import read_contained
+from linker_lambda import lambda_links
 from linker_streams import stream_links
+from scopes import plain
 
 STOP = {"prod", "production", "staging", "stage", "stg", "dev", "test", "qa", "svc", "service", "services", "ecs", "app", "the", "main", "default",
         "src", "server", "fargate", "task", "container", "img", "image", "latest", "v1", "v2"}
@@ -27,7 +29,8 @@ DEPLOY_FILE = re.compile(r"(Dockerfile|docker-compose[^/]*\.ya?ml|compose[^/]*\.
                          r"[^/]*task[-_]?def[^/]*\.json|\.tf|deploy[^/]*\.(sh|ya?ml|json)|serverless\.ya?ml|copilot/.+\.ya?ml|\.gitlab-ci\.yml)$", re.I)
 SKIP = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build", ".terraform", "floorplan"}
 REVIEW_BELOW = 0.6
-GENERIC = {"worker", "workers", "backend", "frontend", "server", "api", "web", "app", "service", "agent", "base", "main", "consumer", "processor", "proxy", "nginx", "sidecar"}
+GENERIC = {"worker", "workers", "backend", "frontend", "server", "api", "web", "app", "service", "agent", "base", "main", "consumer", "processor", "proxy", "nginx", "sidecar",
+           "handler", "lambda", "function", "functions", "lib", "common", "shared"}
 MIN_SCORE = 0.8  # below this, a service stays unplaced rather than guessed
 
 
@@ -84,8 +87,8 @@ def score_placement(code: dict, inv: dict, deploys: list[tuple[str, str]], servi
     ecs = inv["ecs"]
     svc_tokens = {s: tokens(Path(s).name) | (tokens(Path(s).parent.name) if Path(s).parent.name not in ("", ".") else set()) for s in services}
     ecs_tokens = {f'{x["cluster"]}/{x["n"]}': tokens(x["n"]) | tokens(" ".join(x["images"] + x["containers"])) for x in ecs}
-    cluster_tokens = {f'{x["cluster"]}/{x["n"]}': tokens(x["cluster"]) for x in ecs}
-    clusters = {x["cluster"] for x in ecs}
+    cluster_tokens = {f'{x["cluster"]}/{x["n"]}': tokens(plain(x["cluster"])) for x in ecs}  # "eu-west-1:shop" is the shop cluster in one region
+    clusters = {plain(x["cluster"]) for x in ecs}
     cdf = Counter(t for c in clusters for t in tokens(c))
     convention = {t for t, n in cdf.items() if n >= max(2, 0.4 * len(clusters))}  # e.g. the company prefix in most cluster names
     ecs_tokens = {k: v - convention for k, v in ecs_tokens.items()}
@@ -185,12 +188,23 @@ def mentions_queue(text: str, stem: str) -> bool:
     return False
 
 
+def same_region(a: dict, b: dict) -> bool:
+    """Rows of a merged inventory carry their region and account; a single-scope inventory's rows carry neither."""
+    return all(not a.get(k) or not b.get(k) or a[k] == b[k] for k in ("region", "account"))
+
+
+def _same_scope(q: str, x: dict, names: list[str], rows: dict[str, dict]) -> list[str]:
+    """The queues named q (exactly, or once a scope prefix is dropped) in the service's own region and account."""
+    return [n for n in names if (n == q or plain(n) == q) and same_region(x, rows.get(n, {}))]
+
+
 def queue_links(code: dict, inv: dict, services: list[str], placement: dict[str, dict], base: Path) -> tuple[dict, dict]:
     design = inv.get("mode") == "design"  # no traffic numbers: every queue in the files counts
     names = sorted({q["n"] for q in inv["sqs"] if design or q["sent"] > 0 or q["backlog"] > 0}, key=len, reverse=True)
     uses: dict[str, set[str]] = {}
     consumers: dict[str, set[str]] = {}
-    stems = {n: re.sub(r"\.fifo$", "", n) for n in names}
+    stems = {n: re.sub(r"\.fifo$", "", plain(n)) for n in names}  # the name the code uses, without a region or account prefix
+    rows = {q["n"]: q for q in inv["sqs"]}
     root = base.resolve()
     for f in code["files"]:
         s = service_of(f["p"], services)
@@ -206,21 +220,26 @@ def queue_links(code: dict, inv: dict, services: list[str], placement: dict[str,
                     consumers.setdefault(n, set()).add(s)
     by_code: dict[str, list[str]] = {}
     for key, p in placement.items():  # queue URLs in the container environment are exact
-        x = next(e for e in inv["ecs"] if f'{e["cluster"]}/{e["n"]}' == key)
+        x = next((e for e in inv["ecs"] if f'{e["cluster"]}/{e["n"]}' == key), None)
+        if x is None:  # a hopscope.json key that names no service in this inventory
+            continue
         for r in x["refs"]:
             if "sqs." in r["v"]:
                 q = r["v"].rsplit("/", 1)[-1]  # a bare SQS host names no queue
-                if "/" in r["v"] and q in names:
-                    uses.setdefault(p["code"], set()).add(q)
-            elif design and "QUEUE" in r["k"].upper() and r["v"] in names:  # design rows keep the bare queue name
-                uses.setdefault(p["code"], set()).add(r["v"])
+                found = _same_scope(q, x, names, rows) if "/" in r["v"] else []
+            elif design and "QUEUE" in r["k"].upper():  # design rows keep the bare queue name
+                found = _same_scope(r["v"], x, names, rows)
+            else:
+                found = []
+            if found:  # no empty entry for a service whose setting names no known queue
+                uses.setdefault(p["code"], set()).update(found)
     for s, qs in uses.items():
         by_code[s] = sorted(qs)
     workers: dict[str, list[str]] = {}
     for q in names:
         code_side = consumers.get(q, set())
         candidates = [e for e in inv["ecs"] if e["env"] == "prod" and e["running"] and re.search(r"worker|consumer|processor|queue|sqs|aggregat", e["n"], re.I)
-                      and (placement.get(f'{e["cluster"]}/{e["n"]}', {}).get("code") in code_side or any(q in r["v"] for r in e["refs"]))]
+                      and same_region(e, rows.get(q, {})) and (placement.get(f'{e["cluster"]}/{e["n"]}', {}).get("code") in code_side or any(plain(q) in r["v"] for r in e["refs"]))]
         if candidates:
             w = candidates[0]
             exts = {x for f in code["files"] if service_of(f["p"], services) == placement.get(f'{w["cluster"]}/{w["n"]}', {}).get("code") for x in f["x"]}
@@ -239,7 +258,9 @@ def db_links(inv: dict, placement: dict[str, dict]) -> dict[str, str]:
                 by_endpoint.setdefault(ep.split(".")[0], []).append(d)
     db_for: dict[str, str] = {}
     for key, p in placement.items():
-        x = next(e for e in inv["ecs"] if f'{e["cluster"]}/{e["n"]}' == key)
+        x = next((e for e in inv["ecs"] if f'{e["cluster"]}/{e["n"]}' == key), None)
+        if x is None:
+            continue
         for r in x["refs"]:
             found = by_endpoint.get(re.sub(r"^[a-z]+://", "", r["v"]).split(".")[0])
             if found and x["env"] == "prod":
@@ -263,21 +284,48 @@ def _not_scanned(path: str) -> str:
     return f"hopscope.json points at {path}, which isn't a scanned folder"
 
 
-def apply_overrides(placement: dict[str, dict], ov: dict, services: list[str]) -> dict:
+def expand_key(key: str, keys: list[str] | None) -> list[str]:
+    """The inventory's cluster/service keys a hopscope.json key means: itself, or in a merged inventory every service whose
+    key without the region or account prefix is the same ("kestrel/shop-api" -> "eu-west-1:kestrel/shop-api", …)."""
+    if keys is None or key in keys:
+        return [key]
+    return [k for k in keys if plain(k) == plain(key)]
+
+
+def expand_workers(workers: dict, inv: dict) -> dict:
+    """hopscope.json queueWorkers keyed by plain queue names, for every queue of that name in a merged inventory."""
+    names = [str(q.get("n")) for q in inv.get("sqs") or [] if isinstance(q, dict)]
+    out: dict = {}
+    for q, w in (workers or {}).items():
+        for n in ([q] if q in names or not any(plain(x) == q for x in names) else [x for x in names if plain(x) == q]):
+            out[n] = w
+    return out
+
+
+def apply_overrides(placement: dict[str, dict], ov: dict, services: list[str], keys: list[str] | None = None) -> dict:
     """hopscope.json placement, labels and queues, with every folder resolved to a scanned service. A folder that
-    matches none is not used: a placement goes to review, and each one is reported on stderr."""
+    matches none is not used: a placement goes to review, and each one is reported on stderr. With `keys` (the
+    inventory's cluster/service keys), a plain key covers every region's copy and a key naming no service is reported."""
     placed, review = dict(placement), []
-    ignored = {k for k, v in (ov.get("placement") or {}).items() if v is None}
+    ignored: set[str] = set()
     for key, s in (ov.get("placement") or {}).items():  # {"cluster/service": "code/folder"}; null = not our code
+        targets = expand_key(str(key), keys)
+        if not targets:
+            print(f"warning: placement of {key}: no service with that name in the inventory", file=sys.stderr)
+            continue
         if s is None:
-            placed.pop(key, None)
+            ignored.update(targets)
+            for k in targets:
+                placed.pop(k, None)
             continue
         folder = resolve_folder(s, services)
-        if folder:
-            placed[key] = {"code": folder, "confidence": 1.0, "evidence": ["set in hopscope.json"]}
-        else:
-            placed.pop(key, None)
-            review.append({"ecs": key, "code": str(s), "confidence": 0.0, "evidence": [_not_scanned(str(s))]})
+        for k in targets:
+            if folder:
+                placed[k] = {"code": folder, "confidence": 1.0, "evidence": ["set in hopscope.json"]}
+            else:
+                placed.pop(k, None)
+                review.append({"ecs": k, "code": str(s), "confidence": 0.0, "evidence": [_not_scanned(str(s))]})
+        if not folder:
             print(f"warning: placement of {key}: {_not_scanned(str(s))}", file=sys.stderr)
     resolved: dict[str, dict] = {"labels": {}, "queues": {}}
     for section in ("labels", "queues"):
@@ -302,11 +350,12 @@ def main() -> None:
     base = Path(code["base"])
     services = code["services"]
     placement = score_placement(code, inv, deploy_files(base), services)
-    over = apply_overrides(placement, ov, services)
+    ov_ecs = {**ov, "placement": {k: v for k, v in (ov.get("placement") or {}).items() if not str(k).startswith("lambda:")}}
+    over = apply_overrides(placement, ov_ecs, services, [f'{e["cluster"]}/{e["n"]}' for e in inv["ecs"]])
     placement, ignored = over["placement"], over["ignored"]
     queues, workers = queue_links(code, inv, services, placement, base)
     queues.update(over["queues"])
-    workers.update(ov.get("queueWorkers") or {})
+    workers.update(expand_workers(ov.get("queueWorkers") or {}, inv))
     ec2_by_id = {e["id"]: e["n"] for e in inv["ec2"]}
     tg_host = {r["tg"]: ec2_by_id[r["instances"][0]] for lb in inv["lb"] for r in lb["routes"] if r["instances"] and r["instances"][0] in ec2_by_id}
     db_for = db_links(inv, placement)
@@ -314,15 +363,19 @@ def main() -> None:
     code_to_compute: dict[str, list[str]] = {}
     for key, p in sorted(placement.items(), key=lambda kv: -kv[1]["confidence"]):
         code_to_compute.setdefault(p["code"], []).append(key.split("/", 1)[1])
+    lambdas = lambda_links(code, inv, placement, ov.get("placement"))
+    for fn, p in sorted(lambdas.items()):
+        code_to_compute.setdefault(p["code"], []).append(fn)
     labels = {s: over["labels"].get(s) or re.sub(r"[_\-]+", " ", Path(s).name).strip().capitalize() for s in code_to_compute}
     review = [{"ecs": k, **v} for k, v in placement.items() if v["confidence"] < REVIEW_BELOW] + over["review"]
     unplaced = sorted(k for e in inv["ecs"] if (k := f'{e["cluster"]}/{e["n"]}') not in placement and k not in ignored and e["running"] and e.get("ownImage") is not False)
     why = {k: v for k, v in unscanned_builds(code, inv, services).items() if k in unplaced}
     third_party = sorted(f'{e["cluster"]}/{e["n"]}' for e in inv["ecs"] if e.get("ownImage") is False)
-    out = {"placement": placement, "codeToCompute": code_to_compute, "labels": labels, "queues": queues, "queueWorkers": workers,
-           "tgHost": tg_host, "dbFor": db_for, "streams": streams, "consumers": consumers, "review": review, "unplaced": unplaced, "unplacedWhy": why, "thirdParty": third_party}
+    out = {"placement": placement, "codeToCompute": code_to_compute, "labels": labels, "queues": queues, "queueWorkers": dict(sorted(workers.items())),
+           "tgHost": tg_host, "dbFor": db_for, "lambdas": lambdas, "streams": streams, "consumers": consumers, "review": review, "unplaced": unplaced, "unplacedWhy": why, "thirdParty": third_party}
     json.dump(out, open(a.out, "w"), indent=1)
-    print(f"links: {len(placement)} ECS services placed ({len(review)} to review, {len(unplaced)} unplaced), {sum(map(len, queues.values()))} queue links, "
+    print(f"links: {len(lambdas)} Lambda functions placed, " if lambdas else "links: ", end="")
+    print(f"{len(placement)} ECS services placed ({len(review)} to review, {len(unplaced)} unplaced), {sum(map(len, queues.values()))} queue links, "
           f"{len(workers)} queue workers, {len(tg_host)} EC2 targets -> {a.out}")
 
 

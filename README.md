@@ -12,12 +12,12 @@ Claude or Codex reads your AWS account and your code, links the two, and gives y
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757?style=flat-square)](https://code.claude.com/docs/en/overview)
 [![Codex plugin](https://img.shields.io/badge/Codex-plugin-111?style=flat-square)](docs/codex.md)
 [![Tests](https://img.shields.io/github/actions/workflow/status/supreeth-ravi/hopscope/test.yml?branch=main&style=flat-square&label=tests)](https://github.com/supreeth-ravi/hopscope/actions/workflows/test.yml)
-[![Version](https://img.shields.io/badge/version-0.7.0-111?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.8.0-111?style=flat-square)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111?style=flat-square)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-%E2%89%A53.10-111?style=flat-square)](https://www.python.org)
 [![AWS read-only](https://img.shields.io/badge/AWS-read--only-111?style=flat-square)](skills/hopscope/references/iam-policy.json)
 
-**[Try the live demo](https://supreeth-ravi.github.io/hopscope/demo/)** · [Install](#install) · [Quick start](#quick-start) · [Features](#features) · [See it in action](#see-it-in-action) · [How it works](#how-it-works) · [Docs](docs/README.md) · [FAQ](#faq)
+**[Try the live demo](https://supreeth-ravi.github.io/hopscope/demo/)** · [Kubernetes demo](https://supreeth-ravi.github.io/hopscope/demo-k8s/) · [Serverless demo](https://supreeth-ravi.github.io/hopscope/demo-serverless/) · [Install](#install) · [Quick start](#quick-start) · [Features](#features) · [See it in action](#see-it-in-action) · [How it works](#how-it-works) · [Docs](docs/README.md) · [FAQ](#faq)
 
 </div>
 
@@ -25,7 +25,7 @@ Claude or Codex reads your AWS account and your code, links the two, and gives y
   <img src="docs/images/trace.gif" alt="A POST /account/sign-in request playing hop by hop: Route 53, the public load balancer, the shop-api container and its code path, Cognito and the database, then back to the browser" width="100%">
 </p>
 <p align="center"><sub>A sign-in request, hop by hop: DNS → load balancer rule → the <code>shop-api</code> container and its code path → Cognito and the database → back to the browser.</sub></p>
-<p align="center"><b><a href="https://supreeth-ravi.github.io/hopscope/demo/">Try the live demo →</a></b> Explore Kestrel Coffee, a fictional company's console, in your browser. No install, no AWS account.</p>
+<p align="center"><b><a href="https://supreeth-ravi.github.io/hopscope/demo/">Try the live demo →</a></b> Explore Kestrel Coffee, a fictional company's console, in your browser. No install, no AWS account.<br>Also invented: <a href="https://supreeth-ravi.github.io/hopscope/demo-k8s/">Kestrel Coffee on Kubernetes</a> (EKS, a crash-looping workload, a Kafka topic) and <a href="https://supreeth-ravi.github.io/hopscope/demo-serverless/">Kestrel Coffee serverless</a> (API Gateway and Lambda in two regions, a failing workflow).</p>
 <p align="center">No AWS account of your own? <code>hopscope.py design --repo .</code> builds the map from your code plus docker compose, Terraform or CloudFormation files.</p>
 
 ## Why Hopscope?
@@ -130,6 +130,14 @@ EKS clusters and node groups come with the inventory. Name a kubeconfig context 
 
 **🌊 Workflows and streams**<br>
 Step Functions with the services each state calls and their failed runs, Kinesis streams with reader lag, MSK, EventBridge targets and Lambda event sources. Code that starts a workflow or writes to a stream or topic is linked to the Lambdas that consume it, and traces follow it there.
+
+</td>
+</tr>
+<tr>
+<td colspan="2" valign="top">
+
+**🌍 Several regions and accounts**<br>
+`--region eu-west-1,us-east-1` or `--all-regions`, and `--profile prod,shared` or an opt-in read-only role in every account of your organization (`--org-role`). One console, with a region and account filter; regions with nothing in them are left out, and an account shows as its alias or `acct-••••1234`, never its number.
 
 </td>
 </tr>
@@ -242,6 +250,9 @@ Prefer the command line? See [Getting started](docs/getting-started.md#without-a
 | "Include the workloads in our EKS context prod-eks" (`--kube-context`) | **Components → Kubernetes** |
 | "Which Lambda reads the clickstream, and is it keeping up?" | **Components → Workflows and streams** |
 | "Here is a HAR from my browser: which routes did it hit?" (`observe --har`, MCP `observed`) | The "seen ×N" pills in **Trace** |
+| "Build one Hopscope for eu-west-1 and us-east-1" (`--region a,b`) | The region filter on **Architecture** and **Components** |
+| "Map every account in our organization with the HopscopeReadOnly role" (`--org-role`) | The account filter; each card says where it runs |
+| "Show me POST /orders" on a serverless API | **Trace**: API Gateway → the Lambda function → DynamoDB, SQS, Step Functions |
 
 ## For agents
 
@@ -273,9 +284,9 @@ flowchart LR
 
 Python scripts do the collecting and linking; Claude or Codex runs them, checks the doubtful links with you, and explains the results. Details in [How it works](docs/how-it-works.md).
 
-**AWS:** ECS (Fargate and EC2), EKS (and its workloads through `kubectl`, opt-in), EC2, Application and Network Load Balancers, API Gateway, CloudFront, RDS and Aurora, ElastiCache, OpenSearch, DynamoDB, S3, SQS, SNS, EventBridge (rules and targets), Lambda (and its event sources), Step Functions, Kinesis Data Streams, MSK, Cognito, SES, ECR, Secrets Manager, Cost Explorer.<br>
+**AWS:** one or several regions and accounts in one run. ECS (Fargate and EC2), EKS (and its workloads through `kubectl`, opt-in), EC2, Application and Network Load Balancers, API Gateway, CloudFront, RDS and Aurora, ElastiCache, OpenSearch, DynamoDB, S3, SQS, SNS, EventBridge (rules and targets), Lambda (its event sources, and the code a function runs), Step Functions, Kinesis Data Streams, MSK, Cognito, SES, ECR, Secrets Manager, Cost Explorer.<br>
 **Files (design mode):** docker compose, Terraform, CloudFormation/SAM, Kubernetes manifests, Kustomize, Helm charts, skaffold.yaml.<br>
-**Code:** Python (FastAPI, Flask), JavaScript and TypeScript (Express, NestJS), Go, Java and Kotlin (Spring Boot, Spring MVC, Micronaut, JAX-RS, Ktor), C# (ASP.NET Core controllers and minimal APIs). Call sequences with conditions for Python, Java, Kotlin and C#. Frontend calls (fetch, axios, Angular HttpClient) are linked to the backend routes they reach, so a trace starts at the button. Uses a [floorplan](https://github.com/haydenschmitty/floorplan) map when your repo has one.
+**Code:** Python (FastAPI, Flask), JavaScript and TypeScript (Express, NestJS), Go, Java and Kotlin (Spring Boot, Spring MVC, Micronaut, JAX-RS, Ktor), C# (ASP.NET Core controllers and minimal APIs), Ruby (Rails routes.rb, Sinatra, Grape), PHP (Laravel, Symfony, Slim), Rust (axum, actix-web, Rocket). Call sequences with conditions for Python, Java, Kotlin, C#, Ruby, PHP and Rust. Frontend calls (fetch, axios, Angular HttpClient) are linked to the backend routes they reach, so a trace starts at the button. Uses a [floorplan](https://github.com/haydenschmitty/floorplan) map when your repo has one.
 
 ## What it adds to your project
 
@@ -284,7 +295,7 @@ A `.hopscope/` folder with the collected data, the built page and the last 30 bu
 ## Privacy
 
 - **Read-only AWS access.** Describe/List/Get calls, CloudWatch metrics and Cost Explorer only — the exact [IAM policy](skills/hopscope/references/iam-policy.json).
-- **No secrets stored.** Container environment values are kept only when they are a queue URL or the bare hostname of a database, cache or search endpoint; account numbers are masked. Kubernetes Secrets are never read, and a HAR file is read on your machine and reduced to methods, path patterns, status and timing.
+- **No secrets stored.** Container environment values are kept only when they are a queue URL or the bare hostname of a database, cache or search endpoint; account numbers are masked, and with several accounts each one is shown by its alias or `acct-••••1234`. Kubernetes Secrets are never read, and a HAR file is read on your machine and reduced to methods, path patterns, status and timing.
 - **Stays on your machine** until you publish. Published pages in the Claude app are private until you share them. The local server only answers on localhost, and its Ask endpoint only answers the console page itself.
 - No analytics or tracking.
 
@@ -331,7 +342,7 @@ A run makes a few hundred read API calls and CloudWatch metric queries, which us
 <details>
 <summary><b>We use Kubernetes / GCP / Azure. Will it work?</b></summary>
 
-Not yet. Hopscope covers ECS and EC2 on AWS today. EKS, several regions in one view, and other clouds are on the list.
+Kubernetes, yes: EKS clusters come with the inventory, `--kube-context` reads the workloads, and design mode reads manifests, Kustomize and Helm. Several regions and accounts work in one run. GCP and Azure are not supported yet.
 </details>
 
 <details>

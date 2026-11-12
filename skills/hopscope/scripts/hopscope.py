@@ -1,6 +1,7 @@
 """Hopscope: build a live ops view of your code and your AWS account.
 
     hopscope.py all     --region ap-south-1 --repo ~/src/app [--repo …] [--profile p] [--kube-context ctx] [--overrides hopscope.json] [--workdir .hopscope]
+    hopscope.py all     --region eu-west-1,us-east-1 | --all-regions [--profile p1,p2 | --org-role RoleName [--accounts id1,id2]] --repo …  # several regions/accounts
     hopscope.py design  --repo ~/src/app [--repo …] [--overrides hopscope.json] [--workdir .hopscope]   # no AWS: code + compose/Terraform/CloudFormation files
     hopscope.py collect …same flags…        # gather data only
     hopscope.py build   [--workdir …]       # write the site from collected data
@@ -61,6 +62,24 @@ def snapshot(a: argparse.Namespace, data: Path) -> None:
     try_run("history.py", data / "changes.json", "--data", str(data), "--workdir", str(data.parent), "--keep", str(a.keep))
 
 
+def split(value: str | None) -> list[str]:
+    return [x.strip() for x in str(value or "").split(",") if x.strip()]
+
+
+def multi_scope(a: argparse.Namespace) -> bool:
+    """Several regions or accounts: read through aws_multi.py and merged; one region and one profile keep the original steps."""
+    return len(split(a.region)) > 1 or a.all_regions or len(split(a.profile)) > 1 or bool(a.org_role)
+
+
+def check_collect(a: argparse.Namespace) -> None:
+    if not split(a.region) and not a.all_regions:
+        raise SystemExit("collect needs --region (one, or several comma-separated) or --all-regions, and at least one --repo")
+    if a.org_role and len(split(a.profile)) > 1:
+        raise SystemExit("--org-role reads the organization from one signed-in account: pass at most one --profile with it")
+    if a.accounts and not a.org_role:
+        raise SystemExit("--accounts limits --org-role; pass --org-role <RoleName> too, or use --profile p1,p2")
+
+
 def collect(a: argparse.Namespace, data: Path) -> None:
     data.mkdir(parents=True, exist_ok=True)
     prof = ["--profile", a.profile] if a.profile else []
@@ -68,18 +87,28 @@ def collect(a: argparse.Namespace, data: Path) -> None:
     kube = [x for c in a.kube_context for x in ("--kube-context", c)] + (["--kube-contexts", a.kube_contexts] if a.kube_contexts else [])
     ov = ["--overrides", str(Path(a.overrides).resolve())] if a.overrides else []
     repos = [x for r in a.repo for x in ("--repo", str(Path(r).expanduser().resolve()))]
-    print("1/8 AWS inventory (read-only)…")
-    run("aws_inventory.py", "--region", a.region, *prof, *stg, *kube, "--out", str(data / "aws.json"))
+    multi = multi_scope(a)
+    if multi:
+        print("1/8 AWS inventory and hourly metrics, several regions or accounts (read-only)…")
+        scope = ([*(["--regions", a.region] if a.region else []), *(["--all-regions"] if a.all_regions else []), *(["--profiles", a.profile] if a.profile else []),
+                  *(["--org-role", a.org_role] if a.org_role else []), *(["--accounts", a.accounts] if a.accounts else [])])
+        run("aws_multi.py", *scope, *stg, *kube, "--out", str(data / "aws.json"), "--ts-out", str(data / "ts.json"))
+    else:
+        print("1/8 AWS inventory (read-only)…")
+        run("aws_inventory.py", "--region", a.region, *prof, *stg, *kube, "--out", str(data / "aws.json"))
     print("2/8 code map…")
     run("code_scan.py", *repos, *(["--no-floorplan"] if a.no_floorplan else []), "--out", str(data / "code.json"))
     print("3/8 call flows…")
     run("call_flow.py", str(data / "code.json"), str(data / "flows.json"))
     print("4/8 linking code to infrastructure…")
     run("linker.py", "--aws", str(data / "aws.json"), "--code", str(data / "code.json"), *ov, "--out", str(data / "links.json"))
-    print("5/8 hourly metrics and cost…")
-    run("aws_timeseries.py", "--aws", str(data / "aws.json"), *prof, "--out", str(data / "ts.json"))
+    if multi:
+        print("5/8 hourly metrics and cost: read with the inventory")
+    else:
+        print("5/8 hourly metrics and cost…")
+        run("aws_timeseries.py", "--aws", str(data / "aws.json"), *prof, "--out", str(data / "ts.json"))
     print("6/8 drift: code, infrastructure files and AWS…")
-    try_run("iac_scan.py", data / "iac.json", "--code", str(data / "code.json"), "--region", a.region, "--optional", "--out", str(data / "iac.json"))
+    try_run("iac_scan.py", data / "iac.json", "--code", str(data / "code.json"), "--region", (split(a.region) or ["multi"])[0], "--optional", "--out", str(data / "iac.json"))
     try_run("drift.py", data / "drift.json", "--data", str(data))
     print("7/8 health rules…")
     run("rules.py", "--data", str(data), *ov)
@@ -306,8 +335,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("cmd", choices=["all", "collect", "design", "build", "review", "serve", "impact", "query", "export", "changes", "drift", "observe"])
     ap.add_argument("target", nargs="?", help="impact: a file path; query: a route such as \"POST /orders\"")
-    ap.add_argument("--region")
-    ap.add_argument("--profile")
+    ap.add_argument("--region", help="an AWS region, or several comma-separated (eu-west-1,us-east-1)")
+    ap.add_argument("--all-regions", action="store_true", help="all/collect: every region enabled for the account; regions with nothing in them are left out")
+    ap.add_argument("--profile", help="an AWS profile, or several comma-separated (one account each)")
+    ap.add_argument("--org-role", help="all/collect, opt-in: read every account of the organization through this read-only IAM role (sts:AssumeRole)")
+    ap.add_argument("--accounts", help="with --org-role: only these account ids, comma-separated")
     ap.add_argument("--repo", action="append", default=[])
     ap.add_argument("--overrides", help="hopscope.json with manual links, labels, thresholds")
     ap.add_argument("--staging-pattern")
@@ -329,8 +361,9 @@ def main() -> None:
     work = Path(a.workdir).expanduser().resolve()
     data, site = work / "data", work / "site"
     if a.cmd in ("all", "collect"):
-        if not a.region or not a.repo:
-            raise SystemExit("collect needs --region and at least one --repo")
+        check_collect(a)
+        if not a.repo:
+            raise SystemExit("collect needs at least one --repo")
         collect(a, data)
     if a.cmd == "design":
         if not a.repo:

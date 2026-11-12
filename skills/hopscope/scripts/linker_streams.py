@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 
 from langs.common import read_contained
+from scopes import plain
 
 KIND_OF_EXTERNAL = {"kinesis": "kinesis", "sfn": "sfn", "kafka": "kafka"}
 MIN_NAME = 4
@@ -49,6 +50,14 @@ def _service_of(path: str, services: list[str]) -> str | None:
     return None
 
 
+def _same(x: dict, name: str, inv: dict) -> bool:
+    """In a merged inventory, a setting names the stream or workflow of its own service's region and account."""
+    if name == plain(name):
+        return True
+    rows = [r for k in ("kinesis", "sfn") for r in inv.get(k) or [] if isinstance(r, dict) and r.get("n") == name]
+    return any(all(not x.get(k) or r.get(k) == x.get(k) for k in ("region", "account")) for r in rows) or not rows
+
+
 def stream_links(code: dict, inv: dict, services: list[str], placement: dict[str, dict], base: Path) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
     """({code folder: ["kinesis:x", "sfn:y", "kafka:z"]}, {"<kind>:<name>": [consuming Lambda functions]})."""
     names = _names(inv)
@@ -62,7 +71,7 @@ def stream_links(code: dict, inv: dict, services: list[str], placement: dict[str
         text = read_contained(root, str(f["p"]))
         for kind in kinds:
             for n in names[kind] if text else ():
-                if mentions(text or "", n):
+                if mentions(text or "", plain(n)):  # "eu-west-1:clickstream" is named "clickstream" in the code
                     found.setdefault(svc, set()).add(f"{kind}:{n}")
     for x in inv.get("ecs") or []:  # a stream or state machine named in the container settings of a placed service
         p = placement.get(f'{x.get("cluster")}/{x.get("n")}')
@@ -71,7 +80,7 @@ def stream_links(code: dict, inv: dict, services: list[str], placement: dict[str
         for r in x.get("refs") or []:
             for kind, pool in names.items():
                 v = str(r.get("v") or "")
-                hit = v if v in pool else next((n for n in pool if v.endswith((f":{n}", f"/{n}"))), None)
+                hit = v if v in pool else next((n for n in pool if v.endswith((f":{plain(n)}", f"/{plain(n)}")) and _same(x, n, inv)), None)
                 if hit:
                     found.setdefault(p["code"], set()).add(f"{kind}:{hit}")
     return {k: sorted(v) for k, v in sorted(found.items())}, consumers_of(inv)

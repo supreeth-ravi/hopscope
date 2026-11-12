@@ -1,0 +1,1 @@
+{"mode": "live", "sources": {"code": 4, "files": [], "aws": true}, "checked": ["code against AWS"], "skipped": ["AWS against infrastructure files: no infrastructure files found in the repos"], "findings": [], "uncertain": [], "counts": {}, "summary": "0 findings"}
