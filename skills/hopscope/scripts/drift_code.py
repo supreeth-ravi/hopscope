@@ -18,17 +18,23 @@ MAX_FILE = 300_000
 
 def texts(code: dict) -> list[tuple[str, str]]:
     """(path, text) of the scanned application files; tests, fixtures and docs name queues that need not exist."""
-    base = Path(code.get("base") or ".")
+    try:
+        base = Path(code.get("base") or ".").resolve()
+    except (OSError, RuntimeError):
+        return []
     out = []
     for f in code.get("files", []):
-        rel = str(f.get("p", ""))
-        if NOT_APP_CODE.search(rel):
+        rel = str(f.get("p", "")) if isinstance(f, dict) else ""
+        if not rel or NOT_APP_CODE.search(rel):
             continue
         p = base / rel
         try:
+            # code.json is data: read only regular files that stay under the scanned base, never through a symlink
+            if p.is_symlink() or not p.resolve().is_relative_to(base):
+                continue
             if p.is_file() and p.stat().st_size <= MAX_FILE:
                 out.append((rel, p.read_text(errors="ignore")))
-        except OSError:
+        except (OSError, RuntimeError, ValueError):
             continue
     return out
 
@@ -93,7 +99,40 @@ def ref_queue(r: dict) -> str | None:
     return None
 
 
-def check(code: dict, links: dict, target: dict, where: str, files: list[tuple[str, str]], similar: bool) -> tuple[list[dict], list[dict]]:
+LIVE_MISSING = "The service is configured for a resource that isn't there: calls to it fail."
+DESIGN_MISSING = "It isn't defined in these files; it may be defined in another repo or created outside infrastructure files."
+DESIGN_QUEUE_MISSING = "It isn't defined in these files; it may be defined in another repo or created at runtime."
+
+
+def named_in(name: str, files: list[tuple[str, str]]) -> str | None:
+    """Where a scanned file names `name` standing alone (path:line), or None."""
+    stem = re.sub(r"\.fifo$", "", name)
+    if len(stem) < 3:
+        return None
+    rx = re.compile(r"(?<![\w-])" + re.escape(stem) + r"(?:\.fifo)?(?![\w-])")
+    for path, text in files:
+        m = rx.search(text)
+        if m:
+            return f"{path}:{text.count(chr(10), 0, m.start()) + 1}"
+    return None
+
+
+def missing_ref(key: str, r: dict, missing: str, where: str, files: list[tuple[str, str]], design: bool) -> dict:
+    """A setting that points at a resource the target lacks. In design mode the resource may be defined in another repo:
+    when a scanned file names it, the finding is informational only."""
+    v = str(r.get("v", ""))
+    evidence = [f'setting: {r.get("k")} = {v}', f"{where}: no {missing.split()[0]} named like it"]
+    if not design:
+        return n.finding("ref_missing", f'{key}: {r.get("k")} points at {missing}, which does not exist in {where}', LIVE_MISSING, evidence, key, "ecs")
+    title = f'{key}: {r.get("k")} points at {missing}, which is not defined in these files'
+    seen = named_in(missing.split(" ", 1)[1], files)
+    if seen:
+        return n.finding("ref_missing", title, DESIGN_MISSING, evidence + [f"code: named in {seen}"], key, "ecs", confidence="low", severity="info")
+    return n.finding("ref_missing", title, DESIGN_MISSING, evidence + ["code: not named in any scanned file"], key, "ecs")
+
+
+def check(code: dict, links: dict, target: dict, where: str, files: list[tuple[str, str]], similar: bool,
+          design: bool = False) -> tuple[list[dict], list[dict]]:
     """Unreferenced queues (grouped), queues the code names that don't exist, and settings pointing at missing resources."""
     findings: list[dict] = []
     uncertain: list[dict] = []
@@ -116,9 +155,13 @@ def check(code: dict, links: dict, target: dict, where: str, files: list[tuple[s
                 if similar:
                     uncertain.append({"kind": "sqs", "code": lit, "target": hit, "why": f"code names {lit}; {hit} in {where} is similar"})
             elif hit is None:
-                findings.append(n.finding("queue_missing", f"Code references queue {lit}, which is not in {where}",
-                                          "Messages sent to it fail, or it lives in another account or region.",
-                                          [f"code: {p}" for p in places[:4]] + [f"{where}: no queue named like it among {len(queues)}"], lit, "sqs"))
+                evidence = [f"code: {p}" for p in places[:4]] + [f"{where}: no queue named like it among {len(queues)}"]
+                if design:  # the files of these repos are not the whole system: informational only
+                    findings.append(n.finding("queue_missing", f"Code references queue {lit}, which is not defined in these files", DESIGN_QUEUE_MISSING,
+                                              evidence, lit, "sqs", confidence="low", severity="info"))
+                else:
+                    findings.append(n.finding("queue_missing", f"Code references queue {lit}, which is not in {where}",
+                                              "Messages sent to it fail, or it lives in another account or region.", evidence, lit, "sqs"))
     hosts = {h.split(".")[0] for d in target.get("rds") or [] if isinstance(d, dict) for h in (d.get("endpoint"), d.get("clusterEndpoint")) if h}
     hosts |= {"-".join(n.canon(str(d.get("n")))) for d in target.get("rds") or [] if isinstance(d, dict)}
     for x in ecs:
@@ -132,8 +175,5 @@ def check(code: dict, links: dict, target: dict, where: str, files: list[tuple[s
                 if host not in hosts and "-".join(n.canon(host)) not in hosts:
                     missing = f"database {host}"
             if missing:
-                key = n.key("ecs", x)
-                findings.append(n.finding("ref_missing", f'{key}: {r.get("k")} points at {missing}, which does not exist in {where}',
-                                          "The service is configured for a resource that isn't there: calls to it fail.",
-                                          [f'setting: {r.get("k")} = {v}', f"{where}: no {missing.split()[0]} named like it"], key, "ecs"))
+                findings.append(missing_ref(n.key("ecs", x), r, missing, where, files, design))
     return findings, uncertain

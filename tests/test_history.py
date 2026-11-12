@@ -211,3 +211,29 @@ def test_code_build_time_alone_is_not_a_change(tmp_path) -> None:
         f.parent.mkdir()
         f.write_text(json.dumps({"generatedAt": at, "files": [{"p": "x.py"}], "routes": []}))
     assert history.file_summary(a)["sha256"] == history.file_summary(b)["sha256"]
+
+
+def test_snapshot_copies_and_diff_are_masked(tmp_path: Path) -> None:
+    data, work = tmp_path / "data", tmp_path
+    acct = "123456789012"
+    write(data, inv(account=acct), placement={"prod/api": {"code": "shop-api", "confidence": 0.9, "evidence": [f"arn:aws:ecs:us-east-1:{acct}:service/api"]}},
+          actions=[["warn", f"role {acct} is wide", "x", "y"]])
+    history.record(data, work)
+    later = inv(collectedAt="2026-11-02T06:00:00+00:00", account=acct)
+    later["sqs"] = later["sqs"] + [{"n": f"tenant_events_{acct}.fifo", "dlq": False, "fifo": True}]
+    write(data, later)
+    history.record(data, work)
+    for snap in history.snapshots(work):
+        for f in ("aws.json", "links.json", "model.json", "diff.json"):
+            text = (snap / f).read_text()
+            assert acct not in text, f"{snap.name}/{f}"
+            json.loads(text)
+    assert history.load(history.snapshots(work)[0])["links"]["placement"]["prod/api"]["confidence"] == 0.9
+
+
+def test_an_unreadable_file_is_still_masked_in_the_snapshot(tmp_path: Path) -> None:
+    data, work = tmp_path / "data", tmp_path
+    write(data, inv())
+    (data / "links.json").write_text("not json 123456789012")
+    snap = history.take(data, work)
+    assert "123456789012" not in (snap / "links.json").read_text()

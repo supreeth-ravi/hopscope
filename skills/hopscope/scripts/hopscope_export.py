@@ -160,7 +160,8 @@ def mermaid_trace(data: dict, route: str | int) -> str:
 
     client = who("Client")
     lb = who(t["entry"][0]["lb"]) if t["entry"] else None
-    svc = who(t["compute"][0] if t["compute"] else t["service"] or "service")
+    first = t["compute"][0] if t["compute"] else None
+    svc = who(q.compute_name(first) + (" (unconfirmed link)" if isinstance(first, dict) and first.get("unconfirmed") else "") if first else t["service"] or "service")
     lines.append(f"  {client}->>{lb or svc}: {mm(t['route'])}")
     if lb:
         lines.append(f"  {lb}->>{svc}: {mm(t['entry'][0]['when'])}")

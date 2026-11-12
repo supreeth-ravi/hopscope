@@ -137,7 +137,7 @@ details > summary:hover { background: var(--raise) }
 .aq { display: grid; gap: 8px; max-height: 470px; overflow: auto }
 .aqi { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; background: var(--raise); border-radius: 9px; padding: 10px 12px }
 .sev { font: 600 10px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; padding: 3px 7px; border-radius: 4px; align-self: start }
-.sev.bad { background: var(--red-dim); color: var(--red) } .sev.warn { background: var(--amber-dim); color: var(--amber) } .sev.save { background: var(--signal-dim); color: var(--signal) }
+.sev.info { background: var(--line); color: var(--muted) } .sev.bad { background: var(--red-dim); color: var(--red) } .sev.warn { background: var(--amber-dim); color: var(--amber) } .sev.save { background: var(--signal-dim); color: var(--signal) }
 .aqi b { font-size: 13px; display: block } .aqi p { margin: 3px 0 0; font-size: 12px; color: var(--muted) } .aqi .fix { color: var(--ink) } .aqi .fix::before { content: "Fix → "; color: var(--signal); font-weight: 600 }
 .svcbar { display: grid; grid-template-columns: minmax(0, 190px) minmax(0, 1fr) 84px; gap: 10px; align-items: center; padding: 5px 0; font-size: 12px }
 .svcbar .nm { font-family: var(--f-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis } .svcbar .num { font-family: var(--f-mono); text-align: right; color: var(--muted); white-space: nowrap }
@@ -245,7 +245,10 @@ td .rp { font-size: 11px }
 .tl-list li.bad { border-left: 3px solid var(--red) } .tl-list li.dep { border-left: 3px solid var(--violet) }
 .drift { display: grid; gap: 8px }
 .drift details { background: var(--raise); border-radius: 9px; padding: 9px 12px }
-.drift summary { cursor: pointer; font-size: 13px; font-weight: 600; display: flex; gap: 8px; align-items: baseline }
+.drift summary { cursor: pointer; font-size: 13px; font-weight: 600; display: flex; gap: 8px; align-items: baseline; min-width: 0 }
+.drift summary .sev, .drift summary .pill { white-space: nowrap; flex-shrink: 0 } /* badges stay on one line; the title wraps */
+.drift summary .dt { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere }
+@media (max-width: 640px) { .drift summary { flex-wrap: wrap } .drift summary .dt { flex-basis: 100% } }
 .drift details p { margin: 4px 0 0; font-size: 12px; color: var(--muted) }
 .drift ul { margin: 6px 0 0; padding-left: 18px; font: 11.5px var(--f-mono); color: var(--muted); overflow-wrap: anywhere }
 </style>
@@ -409,6 +412,11 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<
 const lvlOf = (v) => (v >= 80 ? 'bad' : v < 1 ? 'warn' : '');
 const fmt = (v) => (v == null ? '—' : v < 1 ? v.toFixed(2) : v.toFixed(1));
 let byName = {};
+let LINK_CONF = {}; // ECS key -> linker confidence, for links below 0.6 (model.json review)
+// A compute whose link to its code is a low-confidence guess: its confidence, else null.
+const linkConf = (name) => { const c = LINK_CONF[byName[name]?.key]; return typeof c === 'number' && c < 0.6 ? c : null; };
+const linkNote = (name) => (linkConf(name) == null ? '' : ` (unconfirmed link, ${linkConf(name)} — confirm with hopscope.py review)`);
+const linkPill = (name) => (linkConf(name) == null ? '' : `<span class="pill amber" title="${esc('A low-confidence guess: confirm with hopscope.py review')}">unconfirmed link, ${esc(String(linkConf(name)))}</span>`);
 let D = null;
 let DESIGN = false; // built from files, not from a live account: no measured numbers anywhere
 const planned = (r) => (r && r.kind === 'ecs' ? `planned ${r.tasks} task${r.tasks === 1 ? '' : 's'}` : r ? r.size : '');
@@ -463,7 +471,7 @@ function openRes(name) {
     ${r.note ? `<div class="alert ${r.lvl}"><div><b>${r.lvl === 'bad' ? 'Critical' : 'Warning'}</b><span>${esc(r.note)}</span></div></div>` : ''}
     <dl><dt>Type</dt><dd>${{ ecs: 'ECS container service', ec2: 'EC2 server', rds: 'Aurora serverless database', sqs: 'SQS queue', lb: 'Load balancer' }[r.kind]}</dd>${edgeFor(r.n) ? `<dt>Public route</dt><dd class="mono">${esc(edgeFor(r.n).lb)}<br>${esc(edgeFor(r.n).when)}</dd>` : ''}<dt>Size</dt><dd>${esc(r.size)}</dd>
     ${DESIGN ? (r.kind === 'ecs' ? `<dt>Planned tasks</dt><dd class="mono">${r.tasks}</dd>` : '') : `<dt>${r.kind === 'rds' ? 'Capacity used' : 'CPU avg'}</dt><dd class="mono">${fmt(r.cpu)}%</dd>${r.mem != null ? `<dt>Memory avg</dt><dd class="mono">${fmt(r.mem)}%</dd>` : ''}`}
-    <dt>Runs code</dt><dd class="mono">${roots.map(esc).join('<br>') || '—'}</dd><dt>APIs served</dt><dd>${routes.length || '—'}</dd></dl>
+    <dt>Runs code</dt><dd class="mono">${roots.map(esc).join('<br>') || '—'}${roots.length && linkPill(r.n) ? '<br>' + linkPill(r.n) : ''}</dd><dt>APIs served</dt><dd>${routes.length || '—'}</dd></dl>
     ${routes.length ? `<div><span class="label">Sample APIs</span>${routes.slice(0, 12).map((x) => `<button class="route" data-route="${D.routes.indexOf(x)}"><span class="verb ${esc(x.m)}">${esc(x.m)}</span><span class="rp">${esc(x.p)}</span></button>`).join('')}</div>` : ''}`;
   $('#drawer').hidden = false; $('#dclose').focus();
 }
@@ -502,7 +510,7 @@ function showModule(id) {
     <div><span class="label">${m.parent ? esc(label(m.parent)) + ' / module' : 'System'}</span><h2>${esc(m.label)}</h2><p class="hint" style="margin:6px 0 0">${esc(m.summary)}</p></div>
     <div class="kpis"><div class="kpi"><b>${m.files}</b><span>files</span></div><div class="kpi"><b>${(m.loc / 1000).toFixed(1)}k</b><span>lines</span></div>
       <div class="kpi"><b>${D.routes.filter((r) => { const fm = moduleOfRoute(r); return fm === id || fm.startsWith(id + '.'); }).length}</b><span>APIs</span></div></div>
-    <div><span class="label">Runs on</span><div class="chips" style="margin-top:6px">${compute.length ? compute.map((c) => `<button class="chip infra" data-res="${esc(c)}">${esc(c)}${cpuTag(byName[c])}</button>`).join('') : `<span class="hint">${DESIGN ? 'Not found in the infrastructure files' : 'Not found in the AWS snapshot'}</span>`}</div></div>
+    <div><span class="label">Runs on</span><div class="chips" style="margin-top:6px">${compute.length ? compute.map((c) => `<button class="chip infra" data-res="${esc(c)}">${esc(c)}${cpuTag(byName[c])}</button>${linkPill(c)}`).join('') : `<span class="hint">${DESIGN ? 'Not found in the infrastructure files' : 'Not found in the AWS snapshot'}</span>`}</div></div>
     <div><span class="label">Depends on</span><div class="chips" style="margin-top:6px">${ext.map((x) => `<span class="chip ext">${EXTERNAL[x]?.n || x}</span>`).join('') || '<span class="hint">No external systems detected</span>'}</div></div>
     ${outs.length || ins.length ? `<div class="tbl"><table><thead><tr><th>Direction</th><th>System</th><th>How</th></tr></thead><tbody>
       ${outs.slice(0, 12).map((l) => `<tr><td>calls →</td><td>${esc(label(l.b))}</td><td>${esc(l.k)} ${esc(l.label)}</td></tr>`).join('')}
@@ -647,7 +655,7 @@ function localBrief(t, S) {
   t.queues.filter((q) => q.backlog > 0).forEach((q) => risks.push(`${q.n} has ${q.backlog} message(s) waiting.`));
   if (c && m && m.kind === 'ecs' && !m.lvl && m.tasks === 1) risks.push(`${c} runs as a single task, so there is no spare copy if it restarts.`);
   const cond = S.seq.filter((s) => s.kind === 'cond').length, asy = S.seq.filter((s) => s.kind === 'async').length;
-  return [`${t.r.m} ${t.r.p} enters through ${t.edge ? t.edge.lb : 'an internal call'} and runs on ${c || 'an undeployed service'}${m && !DESIGN ? ` (${fmt(m.cpu)}% CPU${m.mem != null ? ', ' + fmt(m.mem) + '% memory' : ''})` : ''}.`,
+  return [`${t.r.m} ${t.r.p} enters through ${t.edge ? t.edge.lb : 'an internal call'} and runs on ${c ? c + linkNote(c) : 'an undeployed service'}${m && !DESIGN ? ` (${fmt(m.cpu)}% CPU${m.mem != null ? ', ' + fmt(m.mem) + '% memory' : ''})` : ''}.`,
     stores.length ? `It talks to ${stores.join(', ')}.` : 'It does not call any data store.',
     `${S.seq.length} steps${cond ? `, ${cond} only under some conditions` : ''}${asy ? `, ${asy} in the background after the response` : ''}.`,
     risks.length ? '\nWatch:\n• ' + risks.slice(0, 3).join('\n• ') : ''].filter(Boolean).join('\n');
@@ -677,7 +685,7 @@ async function askClaudeNow() {
 function describeTrace(t) {
   const c = t.compute?.[0], m = byName[c];
   return [`Route: ${t.r.m} ${t.r.p} — ${t.r.t}: ${t.r.d}`, `Entry: ${t.edge ? `${t.edge.lb} (${t.edge.scheme}) rule ${t.edge.when}` : 'no load balancer rule found'}`,
-    `Queues: ${t.queues.map((q) => (DESIGN ? q.n : `${q.n} (${q.sent} sent/3d, backlog ${q.backlog})`)).join('; ') || 'none'}`, `Compute: ${c || 'not deployed'}${m ? (DESIGN ? ` (${planned(m)})` : ` (${m.size}, CPU ${fmt(m.cpu)}%, memory ${fmt(m.mem)}%${m.note ? ', note: ' + m.note : ''})`) : ''}`,
+    `Queues: ${t.queues.map((q) => (DESIGN ? q.n : `${q.n} (${q.sent} sent/3d, backlog ${q.backlog})`)).join('; ') || 'none'}`, `Compute: ${c ? c + linkNote(c) : 'not deployed'}${m ? (DESIGN ? ` (${planned(m)})` : ` (${m.size}, CPU ${fmt(m.cpu)}%, memory ${fmt(m.mem)}%${m.note ? ', note: ' + m.note : ''})`) : ''}`,
     `Code files: ${t.touch.map((f) => D.files[f].p + (D.files[f].x.length ? ' [' + D.files[f].x.join(',') + ']' : '')).join('; ')}`,
     `Downstream services: ${t.downstream.map((d) => (PLACEMENT[d.root]?.compute?.[0] || d.root) + ' via ' + d.calls.map((x) => x.label).join(',')).join('; ') || 'none'}`,
     `External systems: ${t.ext.map((x) => EXTERNAL[x]?.n + ' (' + EXTERNAL[x]?.r + ')').join(', ') || 'none'}`,
@@ -1437,7 +1445,7 @@ function driftHtml() {
   if (!DR) return '<p class="hint">No drift report in this build.</p>';
   const f = DR.findings || [], u = DR.uncertain || [];
   const head = `<p class="hint" style="margin:0 0 4px">${esc(DR.summary)} · checked ${esc((DR.checked || []).join('; '))}${(DR.skipped || []).length ? ` · skipped ${esc(DR.skipped.join('; '))}` : ''}</p>`;
-  const items = f.map((x) => `<details><summary><span class="sev warn">${esc(DRIFT_KIND[x.kind] || x.kind)}</span><span>${esc(x.title)}</span>${x.confidence === 'low' ? '<span class="pill mute">low confidence</span>' : ''}${x.count > 1 && !x.family ? `<span class="pill mute">${esc(String(Number(x.count) || 0))}</span>` : ''}</summary>
+  const items = f.map((x) => `<details><summary><span class="sev ${x.severity === 'info' ? 'info' : 'warn'}">${esc(x.severity === 'info' && ['ref_missing', 'queue_missing'].includes(x.kind) ? 'defined elsewhere?' : DRIFT_KIND[x.kind] || x.kind)}</span><span class="dt">${esc(x.title)}</span>${x.unconfirmed ? `<span class="pill amber">unconfirmed link, ${esc(String(Number(x.linkConfidence) || 0))}</span>` : x.confidence === 'low' ? '<span class="pill mute">low confidence</span>' : ''}${x.count > 1 && !x.family ? `<span class="pill mute">${esc(String(Number(x.count) || 0))}</span>` : ''}</summary>
     <p>${esc(x.detail)}</p><ul>${(x.evidence || []).map((e) => `<li>${esc(e)}</li>`).join('')}</ul></details>`).join('');
   const unsure = u.length ? `<p class="hint">${u.length} similar name${u.length === 1 ? '' : 's'} not counted as drift: ${esc(u.slice(0, 4).map((x) => `${x.aws || x.code || x.files} ~ ${x.files || x.target || x.aws}`).join(' · '))}</p>` : '';
   return `<div class="drift">${head}${items || `<p class="hint">${DR.mode === 'design' ? 'The code and the files agree.' : 'Code, files and AWS agree.'}</p>`}${unsure}</div>`;
@@ -1552,6 +1560,7 @@ Promise.all([load('code.json', null), load('aws.json', null), load('flows.json',
   INFRA = M.infra; SYS_LABEL = M.systems; PLACEMENT = M.placement; QUEUES = M.queues; QUEUE_WORKER = M.queueWorkers; TG_HOST = M.tgHost;
   SPEND = M.spend; SAVINGS = M.savings; EXAMPLES = M.examples.length ? M.examples : ['Show me POST /login'];
   byName = Object.fromEntries(INFRA.map((r) => [r.n, r]));
+  LINK_CONF = Object.fromEntries((Array.isArray(M.review) ? M.review : []).filter((x) => x && typeof x.ecs === 'string' && typeof x.confidence === 'number').map((x) => [x.ecs, x.confidence]));
   $('#brand').textContent = M.meta.company ? `HOPSCOPE · ${M.meta.company.toUpperCase()}` : 'HOPSCOPE';
   document.title = M.meta.company ? `${M.meta.company} · Hopscope` : 'Hopscope';
   $('#arch-kicker').textContent = `AWS architecture · ${M.meta.region}`; $('#arch-title').textContent = `${M.meta.company || 'Platform'}, as deployed`;

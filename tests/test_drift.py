@@ -256,3 +256,75 @@ def test_same_named_rows_prefer_the_same_environment(tmp_path: Path) -> None:
                     c.ecs_row("staging", "api", desired=1, source="terraform", desired_set=True, build_from="b.tf")]
     rep = drift.report(code_repo(tmp_path / "repo"), {"placement": {}}, live, files)
     assert not by_kind(rep).get("desired_differs")
+
+
+def test_design_mode_missing_reference_may_live_in_another_repo(tmp_path: Path) -> None:
+    files = files_inventory()
+    files["ecs"][0]["refs"] = [{"k": "REFUNDS_QUEUE", "v": "shop-refunds"}, {"k": "AUDIT_QUEUE", "v": "shop-audit"}]
+    rep = drift.report(code_repo(tmp_path / "repo"), {"placement": {}, "queues": {}}, None, files)
+    elsewhere = "It isn't defined in these files; it may be defined in another repo or created outside infrastructure files."
+    by_q = {("shop-refunds" if "shop-refunds" in f["title"] else "shop-audit"): f for f in by_kind(rep)["ref_missing"]}
+    assert all(f["detail"] == elsewhere for f in by_q.values())
+    assert "does not exist" not in by_q["shop-refunds"]["title"] and "not defined in these files" in by_q["shop-refunds"]["title"]
+    # the code names shop-refunds (api/app.py): probably created elsewhere, so informational only
+    assert by_q["shop-refunds"]["severity"] == "info" and by_q["shop-refunds"]["confidence"] == "low"
+    assert any("api/app.py" in e for e in by_q["shop-refunds"]["evidence"])
+    # shop-audit is in no scanned repo at all: still a warning
+    assert by_q["shop-audit"]["severity"] == "warn"
+    broken = [a for a in drift.actions(rep) if "reference(s)" in a[1]]
+    assert broken and broken[0][1].startswith("1 reference(s)") and "shop-audit" in broken[0][2] and "shop-refunds" not in broken[0][2]
+
+
+def test_design_mode_reference_named_in_code_is_not_a_warning_action(tmp_path: Path) -> None:
+    files = files_inventory()
+    files["ecs"][0]["refs"] = [{"k": "REFUNDS_QUEUE", "v": "shop-refunds"}]
+    rep = drift.report(code_repo(tmp_path / "repo"), {"placement": {}, "queues": {}}, None, files)
+    assert [f["severity"] for f in by_kind(rep)["ref_missing"]] == ["info"]
+    assert not any("shop-refunds" in " ".join(a) for a in drift.actions(rep))
+    assert "broken settings" not in rep["summary"]
+
+
+def test_live_mode_missing_reference_wording_is_unchanged(tmp_path: Path) -> None:
+    rep = drift.report(code_repo(tmp_path / "repo"), links(), live_inventory(), files_inventory())
+    f = by_kind(rep)["ref_missing"][0]
+    assert f["title"] == "prod-shop/api: GONE points at queue shop-vanished, which does not exist in AWS"
+    assert f["detail"] == "The service is configured for a resource that isn't there: calls to it fail." and f["severity"] == "warn"
+
+
+def test_code_texts_stay_under_the_base_and_skip_symlinks(tmp_path: Path) -> None:
+    import drift_code
+    base = tmp_path / "repo"
+    (base / "api").mkdir(parents=True)
+    (base / "api" / "app.py").write_text('Q = "inside.fifo"\n')
+    (tmp_path / "secret.py").write_text('Q = "outside.fifo"\n')
+    (base / "api" / "link.py").symlink_to(tmp_path / "secret.py")
+    (base / "api" / "inner.py").symlink_to(base / "api" / "app.py")
+    code = {"base": str(base), "files": [{"p": "api/app.py"}, {"p": "../secret.py"}, {"p": "api/../../secret.py"}, {"p": str(tmp_path / "secret.py")},
+                                         {"p": "api/link.py"}, {"p": "api/inner.py"}]}
+    got = drift_code.texts(code)
+    assert [p for p, _ in got] == ["api/app.py"]
+    assert all("outside" not in t for _, t in got)
+
+
+def test_console_drift_badges_stay_on_one_line() -> None:
+    html = (Path(__file__).resolve().parents[1] / "skills" / "hopscope" / "assets" / "console.html").read_text()
+    assert ".drift summary .sev, .drift summary .pill { white-space: nowrap; flex-shrink: 0 }" in html
+    assert '<span class="dt">${esc(x.title)}</span>' in html and ".drift summary .dt { flex: 1 1 auto; min-width: 0" in html
+
+
+def test_design_mode_missing_queue_may_be_defined_elsewhere(tmp_path: Path) -> None:
+    rep = drift.report(code_repo(tmp_path / "repo"), {"placement": {}, "queues": {}}, None, files_inventory())
+    f = by_kind(rep)["queue_missing"][0]
+    assert f["title"] == "Code references queue shop-ghost.fifo, which is not defined in these files"
+    assert f["detail"] == "It isn't defined in these files; it may be defined in another repo or created at runtime."
+    assert f["severity"] == "info" and f["confidence"] == "low"
+    assert not any("shop-ghost" in " ".join(a) for a in drift.actions(rep))
+    assert "missing queues" not in rep["summary"]
+
+
+def test_live_mode_missing_queue_wording_is_unchanged(tmp_path: Path) -> None:
+    rep = drift.report(code_repo(tmp_path / "repo"), links(), live_inventory(), files_inventory())
+    f = by_kind(rep)["queue_missing"][0]
+    assert f["title"] == "Code references queue shop-ghost.fifo, which is not in AWS"
+    assert f["detail"] == "Messages sent to it fail, or it lives in another account or region." and f["severity"] == "warn"
+    assert any("shop-ghost" in " ".join(a) for a in drift.actions(rep))

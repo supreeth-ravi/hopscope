@@ -91,6 +91,17 @@ def _time_of(snap: Path) -> datetime | None:
     return t
 
 
+def _write_masked(src: Path, dst: Path) -> None:
+    """Copy a build file with account numbers starred out (they should already be; this is defence in depth).
+    A file that isn't JSON is copied as masked text, so the snapshot still records that it was unreadable."""
+    text = src.read_text(encoding="utf-8", errors="replace")
+    try:
+        out = json.dumps(mask_numbers(json.loads(text)), ensure_ascii=False)
+    except ValueError:
+        out = mask_numbers(text)
+    dst.write_text(out, encoding="utf-8")
+
+
 def take(data: Path, work: Path, at: datetime | None = None) -> Path:
     """Copy this build's key files into a new snapshot folder named by its UTC time. Snapshots only move forward: a
     build whose collection time is not after the latest snapshot's is stamped one second after it."""
@@ -110,7 +121,7 @@ def take(data: Path, work: Path, at: datetime | None = None) -> Path:
     snap.mkdir()
     for f in KEPT:
         if (data / f).is_file():
-            shutil.copy(data / f, snap / f)
+            _write_masked(data / f, snap / f)
     meta = {"at": when.astimezone(timezone.utc).isoformat(timespec="seconds"), "mode": aws.get("mode", "live"),
             "files": {f: file_summary(data / f) for f in SUMMARISED if (data / f).is_file()}}
     (snap / "meta.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
@@ -272,7 +283,7 @@ def record(data: Path, work: Path, keep: int = 30, at: datetime | None = None) -
         d = {"added": [], "removed": [], "changed": [], "links": [], "actions": {"new": [], "resolved": []}, "code": {"changed": False},
              "truncated": 0, "snapshot": snap.name, "previous": None, "at": new["meta"].get("at"), "since": None, "first": True,
              "summary": "first snapshot: nothing to compare yet"}
-    (snap / "diff.json").write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+    (snap / "diff.json").write_text(json.dumps(mask_numbers(d), ensure_ascii=False), encoding="utf-8")
     prune(work, keep, protect=snap.name)
     hist = []
     for s in reversed(snapshots(work)[-HISTORY:]):

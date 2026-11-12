@@ -29,10 +29,12 @@ ORDER = ("link_may_be_wrong", "image_differs", "desired_differs", "taskdef_diffe
          "aws_not_in_files", "queue_unreferenced")
 LABEL = {"link_may_be_wrong": "links may be wrong", "image_differs": "images differ", "desired_differs": "desired counts differ",
          "taskdef_differs": "task definitions differ", "ref_missing": "broken settings", "queue_missing": "missing queues",
-         "files_not_deployed": "not deployed", "aws_not_in_files": "in AWS but in no file", "queue_unreferenced": "queues no code references"}
+         "files_not_deployed": "not deployed", "aws_not_in_files": "in AWS but in no file", "queue_unreferenced": "queues no code references",
+         "ref_elsewhere": "settings naming resources defined elsewhere", "queue_elsewhere": "queues the code names, defined elsewhere"}
 GROUPED = ("aws_not_in_files", "queue_unreferenced")
 DIFFERENCES = ("link_may_be_wrong", "image_differs", "desired_differs", "taskdef_differs", "files_not_deployed")
 MAX_FINDINGS = 200
+CONFIRMED = 0.6  # links below this confidence are listed for review (linker.REVIEW_BELOW)
 
 
 def _service_of(path: str, services: list[str]) -> str | None:
@@ -144,9 +146,9 @@ def _ecs_pair(a: dict, f: dict, how: str, links: dict, services: list[str]) -> l
     if same_env and f.get("taskFamily") and fam_a and fam_a != f["taskFamily"]:
         out.append(n.finding("taskdef_differs", f'{key}: task definition {a["taskDef"]}, files define family {f["taskFamily"]}',
                              "The service runs a task definition the files don't manage.", [matched, f'files: family {f["taskFamily"]}', f'AWS: {a["taskDef"]}'], key, "ecs"))
-    if how != "folder":
-        out += _link_check(key, f, links, services)
-    return out
+    if how == "folder":  # the pair itself rests on the link: say how sure it is
+        return [with_link_confidence(x, ((links.get("placement") or {}).get(key) or {}).get("confidence")) for x in out]
+    return out + _link_check(key, f, links, services)
 
 
 def _link_check(key: str, f: dict, links: dict, services: list[str]) -> list[dict]:
@@ -155,18 +157,32 @@ def _link_check(key: str, f: dict, links: dict, services: list[str]) -> list[dic
     if want is None or not placed.get("code") or want == placed["code"]:
         return []
     ev = "; ".join(placed.get("evidence") or []) or "linker"
-    return [n.finding("link_may_be_wrong", f'The link for {key} may be wrong: Hopscope placed it on {placed["code"]}, but {f.get("buildFrom") or "a compose file"} builds {want} under that name',
+    return [with_link_confidence(n.finding("link_may_be_wrong", f'The link for {key} may be wrong: Hopscope placed it on {placed["code"]}, but {f.get("buildFrom") or "a compose file"} builds {want} under that name',
                       f'Most often the linker guessed wrong: set "placement": {{"{key}": "{want}"}} in hopscope.json if the file is right. Otherwise the file builds a different folder than is deployed.',
                       [f'links: {key} -> {placed["code"]} (confidence {placed.get("confidence")}, {ev})', f'files: {f["n"]} builds {f.get("build")} in {f.get("buildFrom") or "compose"}'],
-                      key, "ecs", "high" if (placed.get("confidence") or 0) >= 0.6 else "low")]
+                      key, "ecs"), placed.get("confidence"))]
+
+
+def with_link_confidence(f: dict, conf: Any) -> dict:
+    """A copy of a finding that rests on a code-to-compute link, carrying the link's confidence; below 0.6 it is unconfirmed."""
+    c = round(float(conf), 2) if isinstance(conf, (int, float)) and not isinstance(conf, bool) else 0.0
+    low = c < CONFIRMED
+    return {**f, "linkConfidence": c, "confidence": "low" if low else f["confidence"], **({"unconfirmed": True} if low else {})}
+
+
+def _label_kind(f: dict) -> str:
+    """Design-mode findings about resources that may be defined elsewhere are informational: counted apart from broken references."""
+    if f.get("severity") == "info" and f["kind"] in ("ref_missing", "queue_missing"):
+        return "ref_elsewhere" if f["kind"] == "ref_missing" else "queue_elsewhere"
+    return f["kind"]
 
 
 def summary(findings: list[dict]) -> str:
     if not findings:
         return "0 findings"
     parts = []
-    for kind in ORDER:
-        mine = [f for f in findings if f["kind"] == kind]
+    for kind in (*ORDER, "ref_elsewhere", "queue_elsewhere"):
+        mine = [f for f in findings if _label_kind(f) == kind]
         if mine:
             parts.append(f"{LABEL[kind]}: {n.describe(mine) if kind in GROUPED else len(mine)}")
     return f'{len(findings)} finding{"s" if len(findings) != 1 else ""}: ' + "; ".join(parts)
@@ -187,7 +203,7 @@ def report(code: dict, links: dict, live: dict | None, files: dict | None, simil
     elif live is not None:
         skipped.append("AWS against infrastructure files: no infrastructure files found in the repos")
     target, where = (live, "AWS") if live is not None else (files or {}, "the files")
-    f, u = drift_code.check(code, links, target, where, texts, similar)
+    f, u = drift_code.check(code, links, target, where, texts, similar, design=live is None)
     findings += f
     uncertain += u
     checked.append(f"code against {where}")
@@ -207,7 +223,7 @@ def report(code: dict, links: dict, live: dict | None, files: dict | None, simil
 def actions(rep: dict) -> list[list]:
     """At most three action-queue items: differences first, then broken references, then what the files lack, then unused queues."""
     fs = rep.get("findings") or []
-    of = lambda *kinds: [f for f in fs if f["kind"] in kinds]  # noqa: E731
+    of = lambda *kinds: [f for f in fs if f["kind"] in kinds and f.get("severity") != "info"]  # noqa: E731
     out: list[list] = []
     diff = of(*DIFFERENCES)
     if diff:

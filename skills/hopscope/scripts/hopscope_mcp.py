@@ -32,12 +32,14 @@ import hopscope_query as q
 
 LATEST = "2025-06-18"
 SUPPORTED = (LATEST, "2025-03-26", "2024-11-05")
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 MAX_LINE = 1_000_000  # bytes; a request longer than this is refused unread
 
 INSTRUCTIONS = ("Hopscope maps this project's code onto its AWS setup (or its compose/Terraform/CloudFormation files). "
                 "Use impact(path) before changing a file, trace(route) to see what an API touches, find_routes to find the exact route name, "
-                "changes for what changed between builds and recent deploys, drift for where code, files and AWS disagree.")
+                "changes for what changed between builds and recent deploys, drift for where code, files and AWS disagree. "
+                "A compute entry shaped {name, confidence, unconfirmed: true} is a low-confidence guess by the linker: call it an "
+                "unconfirmed link, not fact, and suggest confirming it with hopscope.py review.")
 
 
 def _s(desc: str) -> dict:
@@ -56,7 +58,8 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "trace", "title": "Trace a route",
      "description": "What one API route touches: the load balancer rule, the compute it runs on, each step of its code path in order "
                     "(file:line, kind, condition), and the queues, workers and database it reaches. Free text ('checkout') traces the clearly "
-                    "best match (named in 'matched'), else returns the close candidates.",
+                    "best match (named in 'matched'), else returns the close candidates. Compute linked with low confidence comes back as "
+                    "{name, confidence, unconfirmed: true}: say it is an unconfirmed link.",
      "inputSchema": {"type": "object", "properties": {"route": _s("'METHOD /path' as find_routes returns it, a path, or words")},
                      "required": ["route"], "additionalProperties": False}},
     {"name": "who_calls", "title": "Who calls this",
@@ -65,19 +68,22 @@ TOOLS: list[dict[str, Any]] = [
                                                       "depth": _i("how many hops back (default 3)", 1, q.MAX_DEPTH)},
                      "required": ["target"], "additionalProperties": False}},
     {"name": "what_runs", "title": "What runs this code",
-     "description": "The compute (containers, services) a code folder runs on, the queues it publishes to or consumes, their workers, and its database.",
+     "description": "The compute (containers, services) a code folder runs on, the queues it publishes to or consumes, their workers, and its database. "
+                    "Each compute carries the link confidence when known; unconfirmed: true means a low-confidence guess, so call it an unconfirmed link.",
      "inputSchema": {"type": "object", "properties": {"code_folder": _s("a service folder, or any file path inside one")},
                      "required": ["code_folder"], "additionalProperties": False}},
     {"name": "impact", "title": "Change impact",
      "description": "What breaks if a file changes: files that depend on it, routes whose handler or code path reaches it (nearest first), "
-                    "the services and compute those routes run on, the queues they publish to and the workers consuming them.",
+                    "the services and compute those routes run on, the queues they publish to and the workers consuming them. "
+                    "Compute shaped {name, confidence, unconfirmed: true} is an unconfirmed link: say so.",
      "inputSchema": {"type": "object", "properties": {"path": _s("changed file, repo-relative or its tail (e.g. app/identity.py)")},
                      "required": ["path"], "additionalProperties": False}},
     {"name": "resources", "title": "Infrastructure resources",
      "description": "Infrastructure rows (ECS services, EC2, databases, queues…) with status and notes, plus a count of every AWS component type.",
      "inputSchema": {"type": "object", "properties": {"kind": _s("only this kind: ecs, ec2, rds, sqs, lambda…")}, "additionalProperties": False}},
     {"name": "health", "title": "Health of a resource",
-     "description": "Status and note for a resource or code folder, and the action-queue items that mention it. In design mode there are no live numbers.",
+     "description": "Status and note for a resource or code folder, and the action-queue items that mention it. In design mode there are no live numbers. "
+                    "A row with unconfirmed: true runs code (sys) only by a low-confidence link: call it unconfirmed.",
      "inputSchema": {"type": "object", "properties": {"name": _s("resource name, e.g. a queue or service")},
                      "required": ["name"], "additionalProperties": False}},
     {"name": "changes", "title": "What changed",
@@ -87,7 +93,8 @@ TOOLS: list[dict[str, Any]] = [
                      "additionalProperties": False}},
     {"name": "drift", "title": "Drift",
      "description": "Where the code, the infrastructure files and AWS disagree: resources in AWS but in no file, files never deployed, "
-                    "counts or images that differ, queues nobody references, references to queues or databases that don't exist. Each finding has evidence.",
+                    "counts or images that differ, queues nobody references, references to queues or databases that don't exist. Each finding has evidence. "
+                    "Findings resting on a code-to-compute link carry linkConfidence; unconfirmed: true means that link is unconfirmed.",
      "inputSchema": {"type": "object", "properties": {"kind": _s("only this finding kind, e.g. aws_not_in_files, queue_unreferenced")},
                      "additionalProperties": False}},
 ]

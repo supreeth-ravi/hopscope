@@ -82,6 +82,66 @@ def compute_for(data: dict, service: str | None) -> list[str]:
     return [clip(c) for c in data["links"].get("codeToCompute", {}).get(service, [])[:MAX_ITEMS]]
 
 
+# ---- how sure a code-to-compute link is ----------------------------------------------------------
+
+CONFIRMED = 0.6  # the linker's review threshold: links below it are guesses a person should confirm
+REVIEW_HINT = "confirm with hopscope.py review"
+UNCONFIRMED_NOTE = ("Links marked unconfirmed were guessed by the linker with low confidence: say they are unconfirmed, "
+                    "not fact, and suggest confirming them with hopscope.py review (or setting them in hopscope.json).")
+
+
+def as_confidence(v: Any) -> float | None:
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return round(float(v), 2)
+
+
+def _link_keys(data: dict, name: str, service: str | None) -> list[str]:
+    row = _infra_by_name(data).get(name) or {}
+    if row.get("key"):
+        return [str(row["key"])]
+    placement = data["links"].get("placement")
+    if not isinstance(placement, dict):
+        return []
+    return [k for k, v in placement.items() if str(k).split("/", 1)[-1] == name and (not service or (isinstance(v, dict) and v.get("code") == service))]
+
+
+def link_confidence(data: dict, name: str, service: str | None = None) -> float | None:
+    """The linker's confidence that compute `name` runs its code (links.json, else the review list in model.json); None if unknown."""
+    placement = data["links"].get("placement")
+    reviews = [r for src in (data["links"].get("review"), data["model"].get("review")) if isinstance(src, list) for r in src if isinstance(r, dict)]
+    for key in _link_keys(data, name, service):
+        p = placement.get(key) if isinstance(placement, dict) else None
+        if isinstance(p, dict) and as_confidence(p.get("confidence")) is not None:
+            return as_confidence(p.get("confidence"))
+        for r in reviews:
+            if r.get("ecs") == key and as_confidence(r.get("confidence")) is not None:
+                return as_confidence(r.get("confidence"))
+    return None
+
+
+def unconfirmed(conf: float | None) -> bool:
+    return conf is not None and conf < CONFIRMED
+
+
+def compute_links(data: dict, service: str | None) -> list[Any]:
+    """compute_for, with each low-confidence link as {"name", "confidence", "unconfirmed": true}; confirmed ones stay names."""
+    out: list[Any] = []
+    for c in compute_for(data, service):
+        conf = link_confidence(data, c, service)
+        out.append({"name": c, "confidence": conf, "unconfirmed": True} if unconfirmed(conf) else c)
+    return out
+
+
+def compute_name(c: Any) -> str:
+    """The name of a compute entry from compute_links (a name, or a dict for an unconfirmed link)."""
+    return clip(c.get("name")) if isinstance(c, dict) else clip(c)
+
+
+def _any_unconfirmed(items: list[Any]) -> bool:
+    return any(isinstance(c, dict) and c.get("unconfirmed") for c in items)
+
+
 def _route_name(r: dict) -> str:
     return clip(f'{r.get("m", "")} {r.get("p", "")}'.strip())
 
@@ -251,13 +311,15 @@ def trace(data: dict, route: str | int) -> dict:
     service = service_of(data, handler_path)
     steps = _steps(data, idx)
     compute = compute_for(data, service)
+    shown = compute_links(data, service)
     out_steps = [{"depth": s[0], "kind": clip(s[1]), "label": clip(s[2]), "at": _at(data, s[3], s[4]), "runs": RUNS.get(s[5], "always"),
                   "when": clip(s[6] if len(s) > 6 else ""), "why": clip(s[7] if len(s) > 7 else "")} for s in steps[:MAX_ITEMS]]
     return {"route": _route_name(r), "title": clip(r.get("t")), "handler": _at(data, r.get("f"), r.get("l")), "service": service,
-            "compute": compute, "entry": _entry(data, compute), "steps": out_steps,
+            "compute": shown, "entry": _entry(data, compute), "steps": out_steps,
             "traced": bool(steps) or handler_path.endswith(".py"),
             "queues": _queues_reached(data, service, steps), "database": _database(data, service, steps),
-            "reaches": sorted({clip(s[1]) for s in steps if len(s) > 1 and s[1] != "call"}), **({"matched": matched} if matched else {})}
+            "reaches": sorted({clip(s[1]) for s in steps if len(s) > 1 and s[1] != "call"}), **({"matched": matched} if matched else {}),
+            **({"note": UNCONFIRMED_NOTE} if _any_unconfirmed(shown) else {})}
 
 
 def _match_files(data: dict, target: str) -> list[int]:
@@ -357,7 +419,11 @@ def what_runs(data: dict, code_folder: str) -> dict:
     if not service:
         return {"error": f"{folder!r} is not a code folder Hopscope mapped", "folders": data["code"].get("services", [])[:MAX_ITEMS]}
     infra = _infra_by_name(data)
-    compute = [{"name": c, **{k: infra.get(c, {}).get(k) for k in ("kind", "env", "tasks", "size")}} for c in compute_for(data, service)]
+    compute = []
+    for c in compute_for(data, service):
+        conf = link_confidence(data, c, service)
+        compute.append({"name": c, **{k: infra.get(c, {}).get(k) for k in ("kind", "env", "tasks", "size")},
+                        **({"confidence": conf} if conf is not None else {}), **({"unconfirmed": True} if unconfirmed(conf) else {})})
     workers = _links_view(data, "queueWorkers")
     own = {c["name"] for c in compute}
     queues = [{"queue": clip(q), "role": "consumes" if (workers.get(q) or [None])[0] in own else "publishes",
@@ -366,7 +432,7 @@ def what_runs(data: dict, code_folder: str) -> dict:
     n_routes = sum(1 for r in data["code"].get("routes", []) if 0 <= r.get("f", -1) < len(paths) and service_of(data, paths[r["f"]]) == service)
     return {"folder": folder, "service": service, "compute": compute[:MAX_ITEMS], "queues": queues[:MAX_ITEMS],
             "database": clip(_links_view(data, "dbFor").get(service)) or None, "routes": n_routes,
-            "unplaced": not compute}
+            "unplaced": not compute, **({"note": UNCONFIRMED_NOTE} if _any_unconfirmed(compute) else {})}
 
 
 def impact(data: dict, path: str) -> dict:
@@ -379,13 +445,13 @@ def impact(data: dict, path: str) -> dict:
     walk = _reverse_walk(data, files, MAX_DEPTH)
     importers = sorted(((d, paths[i], k) for i, (d, k) in walk.items() if d > 0), key=lambda x: (x[0], x[1]))
     routes = _routes_touching(data, {i: d for i, (d, _) in walk.items()})
-    services: dict[str, list[str]] = {}
+    services: dict[str, list[Any]] = {}
     queues: list[dict] = []
     for r in routes:
         svc = service_of(data, paths[data["code"]["routes"][r["index"]]["f"]])
         r["service"] = svc
         if svc:
-            services.setdefault(svc, compute_for(data, svc))
+            services.setdefault(svc, compute_links(data, svc))
         for qd in _queues_reached(data, svc, _steps(data, r["index"])):
             same = next((x for x in queues if x["queue"] == qd["queue"]), None)
             if same is None:
@@ -401,15 +467,20 @@ def impact(data: dict, path: str) -> dict:
             "importers": [{"file": p, "depth": d, "via": k} for d, p, k in importers][:MAX_ITEMS],
             "routes": [{k: v for k, v in r.items() if k != "index"} for r in routes][:MAX_ITEMS],
             "services": [{"service": s, "compute": c} for s, c in sorted(services.items())][:MAX_ITEMS],
-            "queues": queues[:MAX_ITEMS], "workers": workers[:MAX_ITEMS], "summary": summary}
+            "queues": queues[:MAX_ITEMS], "workers": workers[:MAX_ITEMS], "summary": summary,
+            **({"note": UNCONFIRMED_NOTE} if any(_any_unconfirmed(c) for c in services.values()) else {})}
 
 
-def _row(r: dict, design: bool) -> dict:
+def _row(data: dict, r: dict, design: bool) -> dict:
     keep = ("n", "kind", "env", "sys", "size", "tasks", "cluster") + (() if design else METRIC_FIELDS)
     out = {k: (clip(r[k]) if isinstance(r[k], str) else r[k]) for k in keep if k in r}
     out["status"] = clip(r.get("lvl") or "ok")
     if r.get("note"):
         out["note"] = clip(r["note"])
+    if r.get("kind") == "ecs" and r.get("key"):  # sys is the code folder it runs: say when that link is a guess
+        conf = link_confidence(data, str(r.get("n")))
+        if unconfirmed(conf):
+            out.update(confidence=conf, unconfirmed=True)
     return out
 
 
@@ -436,7 +507,7 @@ def resources(data: dict, kind: str | None = None) -> dict:
     rows = [r for r in data["model"].get("infra", []) if not kind or r.get("kind") == kind]
     kinds = sorted({clip(r.get("kind")) for r in data["model"].get("infra", [])})[:MAX_ITEMS]
     return {"mode": _mode(data), "kind": clip(kind) or None, "kinds": kinds, "total": len(rows),
-            "rows": [_row(r, design) for r in rows[:MAX_ITEMS]], "aws": _aws_counts(data["aws"])}
+            "rows": [_row(data, r, design) for r in rows[:MAX_ITEMS]], "aws": _aws_counts(data["aws"])}
 
 
 def health(data: dict, name: str) -> dict:
@@ -447,8 +518,11 @@ def health(data: dict, name: str) -> dict:
     rows = [r for r in infra if r.get("n") == name] or [r for r in infra if name.lower() in str(r.get("n", "")).lower() or r.get("sys") == name]
     actions = [{"level": clip(a[0]), "title": clip(a[1]), "impact": clip(a[2]), "fix": clip(a[3])}
                for a in data["model"].get("actions", []) if len(a) >= 4 and name.lower() in " ".join(map(str, a[1:])).lower()]
-    out = {"name": name, "mode": "design" if design else "live", "rows": [_row(r, design) for r in rows[:MAX_ITEMS]],
-           "actions": actions[:MAX_ITEMS], "overall": {k: clip(v) for k, v in (data["model"].get("status") or {}).items()}}
+    shown = [_row(data, r, design) for r in rows[:MAX_ITEMS]]
+    out: dict[str, Any] = {"name": name, "mode": "design" if design else "live", "rows": shown,
+                           "actions": actions[:MAX_ITEMS], "overall": {k: clip(v) for k, v in (data["model"].get("status") or {}).items()}}
+    if any(r.get("unconfirmed") for r in shown):
+        out["links"] = UNCONFIRMED_NOTE
     if design:
         out["note"] = "Design mode: built from code and infrastructure files, so there are no live numbers (traffic, errors, CPU, cost)."
     elif not rows and not actions:

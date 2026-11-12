@@ -1,6 +1,6 @@
 {
   "name": "hopscope",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Map your code onto your live AWS setup, or onto your compose, Terraform and CloudFormation files before you deploy: health dashboard, architecture diagram, component inventory, cost, and narrated request traces that hop from load balancer to code to database.",
   "author": {
     "name": "Supreeth Ravi",

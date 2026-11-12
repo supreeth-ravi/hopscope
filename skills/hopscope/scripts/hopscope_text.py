@@ -13,6 +13,18 @@ def data_dir(work: Path) -> Path:
     raise q.NoData(f"no Hopscope data under {work}: run hopscope.py design or all first")
 
 
+def compute_text(c: object) -> str:
+    """A compute name; an unconfirmed link says so: 'x (unconfirmed link, 0.5 — confirm with hopscope.py review)'."""
+    if isinstance(c, dict):
+        name = q.compute_name(c)
+        return f"{name} (unconfirmed link, {c.get('confidence')} — {q.REVIEW_HINT})" if c.get("unconfirmed") else name
+    return str(c)
+
+
+def _computes(items: list) -> str:
+    return ", ".join(compute_text(c) for c in items) or "no compute linked"
+
+
 def _basis(x: dict) -> str:
     return "  (service publishes to)" if x.get("basis") == "service publishes to" else ""
 
@@ -28,7 +40,7 @@ def impact_text(r: dict) -> str:
     lines.append("Routes it can break (nearest first):" if r["routes"] else "No routes reach it.")
     lines += [f"  {x['route']:<40} {'direct' if x['distance'] == 0 else str(x['distance']) + ' hop(s)':<9} {x['reason']}" for x in r["routes"]]
     if r["services"]:
-        lines += ["", "Runs on:"] + [f"  {s['service']}: {', '.join(s['compute']) or 'no compute linked'}" for s in r["services"]]
+        lines += ["", "Runs on:"] + [f"  {s['service']}: {_computes(s['compute'])}" for s in r["services"]]
     if r["queues"]:
         lines += ["", "Queues and workers downstream:"]
         lines += [f"  {x['queue']} -> {x['worker'] or 'no worker found'}{' (' + x['job'] + ')' if x.get('job') else ''}{_basis(x)}" for x in r["queues"]]
@@ -43,7 +55,7 @@ def trace_text(t: dict) -> str:
              f"  handler {t['handler']}  in {t['service'] or '?'}"]
     for e in t["entry"]:
         lines.append(f"  entry: {e['lb']} when {e['when']} -> {e['target']}")
-    lines.append(f"  runs on: {', '.join(t['compute']) or 'no compute linked'}")
+    lines.append(f"  runs on: {_computes(t['compute'])}")
     lines.append("")
     if t["steps"]:
         for s in t["steps"]:

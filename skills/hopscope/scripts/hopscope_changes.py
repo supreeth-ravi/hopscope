@@ -50,6 +50,14 @@ def changes(data: dict, since: str | None = None, work: Path | None = None) -> d
             "deploys": recent_deploys(data.get("aws") or {})}
 
 
+def _link(f: dict) -> dict:
+    """The code-to-compute link confidence a finding rests on, when it rests on one."""
+    conf = q.as_confidence(f.get("linkConfidence"))
+    if conf is None:
+        return {}
+    return {"linkConfidence": conf, **({"unconfirmed": True} if q.unconfirmed(conf) else {})}
+
+
 def drift(data: dict, kind: str | None = None) -> dict:
     """The drift report's findings (optionally one kind), with evidence and confidence."""
     rep = data.get("drift") or {}
@@ -63,7 +71,7 @@ def drift(data: dict, kind: str | None = None) -> dict:
                           "detail": q.clip(f.get("detail")), "confidence": q.clip(f.get("confidence")), "resource": q.clip(f.get("resource")),
                           "count": int(f.get("count") or 1) if str(f.get("count") or "1").isdigit() else 1,
                           "names": [q.clip(x) for x in (f.get("names") or [])[:5]],
-                          "evidence": [q.clip(e) for e in (f.get("evidence") or [])[:8]]} for f in found[:q.MAX_ITEMS]],
+                          "evidence": [q.clip(e) for e in (f.get("evidence") or [])[:8]], **_link(f)} for f in found[:q.MAX_ITEMS]],
             "uncertain": [{k: q.clip(v) for k, v in u.items()} for u in (rep.get("uncertain") or [])[:20] if isinstance(u, dict)]}
 
 
@@ -88,7 +96,10 @@ def drift_text(r: dict) -> str:
     if r["skipped"]:
         out.append(f'  skipped: {"; ".join(r["skipped"])}')
     for f in r["findings"]:
-        out += ["", f'{"?" if f["confidence"] == "low" else "!"} {f["title"]}', f'  {f["detail"]}'] + [f"    {e}" for e in f["evidence"]]
+        out += ["", f'{"?" if f["confidence"] == "low" else "!"} {f["title"]}', f'  {f["detail"]}']
+        if f.get("unconfirmed"):
+            out.append(f'  rests on an unconfirmed link, {f["linkConfidence"]} — {q.REVIEW_HINT}')
+        out += [f"    {e}" for e in f["evidence"]]
     if r["uncertain"]:
         out += ["", "Unsure matches (not counted as drift):"]
         out += [f'  {u.get("kind")}: {u.get("aws") or u.get("code") or ""} ~ {u.get("files") or u.get("target") or ""}' for u in r["uncertain"]]

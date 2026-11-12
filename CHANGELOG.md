@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.1 — 2026-11-12
+
+- **Unconfirmed links are no longer shown as fact.** Links below 0.6 confidence (the ones `hopscope.py review` lists) are marked wherever Hopscope says which compute runs which code: `trace`, `impact`, `what_runs`, `health` and `resources` return them as `{"name", "confidence", "unconfirmed": true}` with a note to confirm them (confirmed links keep their shape), the command line prints "analytics-engine (unconfirmed link, 0.5 — confirm with hopscope.py review)", drift findings that rest on a link carry `linkConfidence`, the MCP tool descriptions tell agents to call them unconfirmed, and the console drawer, module view, trace brief and drift list say so.
+- **Design-mode drift wording.** A container setting naming a queue or database that isn't in the files now says it may be defined in another repo or created outside infrastructure files. When a scanned file names the resource, the finding is informational and no longer counts as a broken setting in the action queue. Likewise a queue the code names that the files don't define is informational in design mode: it may be defined in another repo or created at runtime. Live mode is unchanged.
+- **Hardening.** Snapshot copies (`aws.json`, `links.json`, `model.json`) and each snapshot's `diff.json` are masked for account numbers before they are written. The drift check reads only code files that resolve under the scanned repo, and never through a symlink.
+- **Console.** Drift badges such as "LINK MAY BE WRONG" stay on one line; the title wraps instead.
+
 ## 0.5.0 — 2026-11-12
 
 - **Snapshots and changes.** Every `all`, `collect` and `design` run copies `aws.json`, `links.json` and `model.json` into `<workdir>/snapshots/<UTC time>/` (with hashes and counts for `code.json` and `flows.json`) and writes `changes.json`: resources added, removed or changed (counts, sizes, images, task-definition revision, load balancer rules, queues, databases), links that moved, and actions that appeared or resolved. The last 30 are kept (`--keep`). `hopscope.py changes [--since <snapshot>]` prints them.

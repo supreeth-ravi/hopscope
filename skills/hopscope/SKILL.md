@@ -140,7 +140,9 @@ re-reading the code or the account.
   the real system, so treat them like the console: don't publish one from a real account.
 
 The answers are as good as the build: call sequences are traced for Python handlers only, and a route's
-compute comes from the reviewed links. In design mode there are no live numbers.
+compute comes from the reviewed links. A compute marked unconfirmed (`{"name", "confidence", "unconfirmed": true}`
+in a tool result, "unconfirmed link, 0.5" in text) is a low-confidence guess: tell the user it is unconfirmed, never
+state it as fact, and offer `hopscope.py review`. In design mode there are no live numbers.
 
 ## Making it presentable for others
 
