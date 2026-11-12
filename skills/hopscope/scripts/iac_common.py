@@ -164,14 +164,16 @@ def empty_inventory(region: str) -> dict:
 
 def ecs_row(cluster: str, name: str, desired: int = 1, images: list[str] | None = None, env_vars: dict[str, Any] | None = None,
             build: str | None = None, build_from: str = "", source: str = "", size: str = "", tgs: list[str] | None = None,
-            known_hosts: Mapping[str, Collection[int]] | Collection[str] | None = None) -> dict:
+            known_hosts: Mapping[str, Collection[int]] | Collection[str] | None = None, desired_set: bool = False, family: str = "", name_var: bool = False) -> dict:
+    """desired_set says the file states a literal desired count (not a variable or a default); family is the task-definition family;
+    name_var says part of the name came from a variable (${var.env}-api), so only its tail is known."""
     full = [i for i in (images or []) if i]
     own = build is not None or not full or any(OWN_REGISTRY.search(i) for i in full)
     imgs = [n for i in full if (n := image_engine(i))]  # the repository name only: a registry host can carry the account number
     return {"cluster": cluster, "n": name, "running": desired, "desired": desired, "size": size, "images": imgs, "ownImage": own,
             "containers": [name], "refs": [{"k": k, "v": sv} for k, v in sorted((env_vars or {}).items()) if (sv := safe_ref(k, str(v), known_hosts)) is not None], "tgs": list(tgs or []),
             "env": env_of(f"{cluster}/{name}"), "cpu": 0, "mem": 0, "memMax": 0, "cpuMax": 0,
-            "build": build, "buildFrom": build_from, "source": source}
+            "build": build, "buildFrom": build_from, "source": source, "desiredSet": desired_set, "taskFamily": family, "nameVar": name_var}
 
 
 def lb_row(name: str, internal: bool = False, source: str = "") -> dict:
@@ -184,9 +186,9 @@ def route(when: str, tg: str, services: list[str], port: int = 443, tg_type: str
     return {"port": port, "when": when, "tg": tg, "services": services, "targets": [], "instances": [], "tgType": tg_type, "attached": attached}
 
 
-def sqs_row(name: str, redrive: bool = False) -> dict:
+def sqs_row(name: str, redrive: bool = False, name_var: bool = False) -> dict:
     dlq = bool(re.search(r"dlq|dead[-_]?letter", name, re.I))
-    return {"n": name, "sent": 0, "backlog": 0.0, "age": 0.0, "dlq": dlq, "fifo": name.endswith(".fifo"), "fam": name, "redrive": redrive}
+    return {"n": name, "sent": 0, "backlog": 0.0, "age": 0.0, "dlq": dlq, "fifo": name.endswith(".fifo"), "fam": name, "redrive": redrive, "nameVar": name_var}
 
 
 LABEL = re.compile(r"[A-Za-z0-9._ -]{1,40}")

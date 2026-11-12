@@ -3,7 +3,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
-/* Layout: a mission-control console. Sticky command bar with the ask box, four views (Overview, Architecture, Trace, Cost) routed on the hash. Dark-first. */
+/* Layout: a mission-control console. Sticky command bar with the ask box, views (Overview, Architecture, Components, Trace, Timeline, Cost) routed on the hash. Dark-first. */
 :root {
   --bg: #0a1014; --panel: #10181e; --raise: #16222a; --line: #22323c; --ink: #dbe7e4; --muted: #7f9692;
   --signal: #4fd1b8; --signal-dim: #1d4a43; --amber: #f0b45b; --amber-dim: #3d2f19; --red: #f2786b; --red-dim: #40221f;
@@ -228,6 +228,26 @@ td .rp { font-size: 11px }
 @media (prefers-reduced-motion: reduce) { .edge.live, .edge.http, .edge.data, .brand-mark i { animation: none } }
 @media (max-width: 900px) { .grid-2, .arch { grid-template-columns: 1fr } .bar .inner { grid-template-columns: 1fr } .status { display: none } .mrow { grid-template-columns: 1fr } .tree { max-height: 50vh } }
 @media (max-width: 480px) { .cell { width: calc(50% - 3px) } }
+
+/* timeline and drift */
+#v-timeline { grid-template-columns: minmax(0, 1fr) }
+@media (max-width: 900px) { #v-timeline .grid-2 { grid-template-columns: minmax(0, 1fr) } }
+.tl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch }
+.tl svg { width: 100%; min-width: 760px; display: block }
+.tl .mk { cursor: pointer; outline: none }
+.tl li.mk.on { outline: 1px solid var(--signal) }
+.tl .mk:hover circle, .tl .mk:focus-visible circle, .tl .mk.on circle { stroke: var(--ink); stroke-width: 2.5 }
+.tl .mk.on line { stroke-opacity: .9 }
+.tl-detail { display: grid; gap: 8px; font-size: 13px }
+.tl-detail p { margin: 0 }
+.tl-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; font: 12px var(--f-mono) }
+.tl-list li { background: var(--raise); border-radius: 7px; padding: 6px 10px; overflow-wrap: anywhere }
+.tl-list li.bad { border-left: 3px solid var(--red) } .tl-list li.dep { border-left: 3px solid var(--violet) }
+.drift { display: grid; gap: 8px }
+.drift details { background: var(--raise); border-radius: 9px; padding: 9px 12px }
+.drift summary { cursor: pointer; font-size: 13px; font-weight: 600; display: flex; gap: 8px; align-items: baseline }
+.drift details p { margin: 4px 0 0; font-size: 12px; color: var(--muted) }
+.drift ul { margin: 6px 0 0; padding-left: 18px; font: 11.5px var(--f-mono); color: var(--muted); overflow-wrap: anywhere }
 </style>
 
 <header class="bar gutter">
@@ -245,6 +265,7 @@ td .rp { font-size: 11px }
     <button class="tab" role="tab" id="tab-architecture" data-v="architecture">Architecture</button>
     <button class="tab" role="tab" id="tab-components" data-v="components">AWS components</button>
     <button class="tab" role="tab" id="tab-trace" data-v="trace">Trace</button>
+    <button class="tab" role="tab" id="tab-timeline" data-v="timeline" hidden>Timeline</button>
     <button class="tab" role="tab" id="tab-cost" data-v="cost">Cost</button>
   </div>
 </header>
@@ -338,6 +359,19 @@ td .rp { font-size: 11px }
     </div>
   </section>
 
+  <section class="view" id="v-timeline" hidden>
+    <div class="panel" id="tl-panel">
+      <div class="panel-head"><div style="display:grid;gap:2px"><span class="label" id="tl-kicker">What changed · last 72 h</span><h2 id="tl-title">Deploys and builds next to errors</h2></div><span class="label" id="tl-note"></span></div>
+      <div class="tl-wrap"><div class="tl" id="tl-chart"></div></div>
+      <p class="hint" id="tl-hint">Each marker is a deploy (a new task-definition revision or ECS deployment) or a Hopscope build. Click one to see what changed.</p>
+    </div>
+    <div class="grid-2">
+      <div class="panel"><div class="panel-head"><h2 id="tl-d-title">Selected change</h2><span class="label" id="tl-d-when"></span></div><div class="tl-detail" id="tl-detail"></div></div>
+      <div class="panel"><div class="panel-head"><h2>Since the last build</h2><span class="label" id="tl-since"></span></div><ul class="tl-list" id="tl-changes"></ul></div>
+    </div>
+    <div class="panel"><div class="panel-head"><h2>Drift</h2><span class="label">code · infrastructure files · AWS</span></div><div id="drift-tl"></div></div>
+  </section>
+
   <section class="view" id="v-cost" hidden>
     <div class="grid-2">
       <div class="panel"><div class="panel-head"><h2>Spend, last 30 days</h2><span class="label">USD, AWS Cost Explorer</span></div><div class="tbl"><table id="spend"><thead><tr><th>Service</th><th></th><th style="text-align:right">USD</th></tr></thead><tbody></tbody></table></div></div>
@@ -393,7 +427,7 @@ function layerOf(p) {
 
 // ---------- views ----------
 function showView(v) {
-  if (!['overview', 'architecture', 'components', 'trace', 'cost'].includes(v) || (DESIGN && v === 'cost')) v = 'overview';
+  if (!['overview', 'architecture', 'components', 'trace', 'timeline', 'cost'].includes(v) || (DESIGN && v === 'cost') || (v === 'timeline' && $('#tab-timeline').hidden)) v = 'overview';
   document.querySelectorAll('.view').forEach((el) => (el.hidden = el.id !== 'v-' + v));
   document.querySelectorAll('.tab').forEach((t) => t.setAttribute('aria-selected', t.dataset.v === v));
   if (location.hash.slice(1) !== v) history.replaceState(null, '', '#' + v);
@@ -1289,6 +1323,7 @@ function renderComponents() {
     ['', A.s3.count, 'S3 buckets'], ['warn', n0(A.ecr), 'container image repos'], ['bad', dlqs.length, 'dead-letter queues with messages'],
   ]).map(([c, b, s]) => `<div class="kpi ${c}"><b>${b}</b><span>${s}</span></div>`).join('');
   const sections = [
+    ...(DR ? [['drift', 'Drift: code, files and AWS', driftHtml()]] : []),
     ['edge', 'Edge and routing', edgeHtml()], ['compute', 'Compute', computeHtml(DESIGN ? A.lambda.slice() : lamUsed, ecsLive)],
     ['messaging', 'Queues and events', messagingHtml(DESIGN ? A.sqs.slice() : sqsUsed)], ['data', 'Data stores', dataHtml()], ['platform', 'Identity, email and platform', platformHtml()],
   ];
@@ -1392,11 +1427,124 @@ $('#voice-pick').addEventListener('change', (e) => {
 });
 $('#voice-rate').addEventListener('change', (e) => { VOICE_RATE = +e.target.value; try { localStorage.setItem('ops-voice-rate', String(VOICE_RATE)); } catch (err) { /* ignore */ } });
 
-showView(location.hash.slice(1) || 'overview');
+// ---------- timeline and drift (changes.json, drift.json, deploys in aws.json) ----------
+let CH = null, DR = null; // what changed since the last build; where code, files and AWS disagree
+const DRIFT_KIND = { aws_not_in_files: 'not in files', files_not_deployed: 'not deployed', desired_differs: 'count differs', image_differs: 'image differs',
+  taskdef_differs: 'task def differs', queue_unreferenced: 'unused queue', queue_missing: 'missing queue', ref_missing: 'broken setting', link_may_be_wrong: 'link may be wrong' };
+const tick = (t) => new Date(t).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+const when = (t) => new Date(t).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+function driftHtml() {
+  if (!DR) return '<p class="hint">No drift report in this build.</p>';
+  const f = DR.findings || [], u = DR.uncertain || [];
+  const head = `<p class="hint" style="margin:0 0 4px">${esc(DR.summary)} · checked ${esc((DR.checked || []).join('; '))}${(DR.skipped || []).length ? ` · skipped ${esc(DR.skipped.join('; '))}` : ''}</p>`;
+  const items = f.map((x) => `<details><summary><span class="sev warn">${esc(DRIFT_KIND[x.kind] || x.kind)}</span><span>${esc(x.title)}</span>${x.confidence === 'low' ? '<span class="pill mute">low confidence</span>' : ''}${x.count > 1 && !x.family ? `<span class="pill mute">${esc(String(Number(x.count) || 0))}</span>` : ''}</summary>
+    <p>${esc(x.detail)}</p><ul>${(x.evidence || []).map((e) => `<li>${esc(e)}</li>`).join('')}</ul></details>`).join('');
+  const unsure = u.length ? `<p class="hint">${u.length} similar name${u.length === 1 ? '' : 's'} not counted as drift: ${esc(u.slice(0, 4).map((x) => `${x.aws || x.code || x.files} ~ ${x.files || x.target || x.aws}`).join(' · '))}</p>` : '';
+  return `<div class="drift">${head}${items || `<p class="hint">${DR.mode === 'design' ? 'The code and the files agree.' : 'Code, files and AWS agree.'}</p>`}${unsure}</div>`;
+}
+function deployMarks(t0, t1) {
+  const byKey = {};
+  for (const x of A?.ecs || []) for (const d of x.deploys || []) {
+    if (d.kind === 'event') continue;
+    const t = new Date(d.at).getTime();
+    if (!(t >= t0 && t <= t1)) continue;
+    const k = `${x.cluster}/${x.n}|${d.taskDef}`, m = (byKey[k] ||= { kind: 'deploy', t, svc: `${x.cluster}/${x.n}`, name: x.n, env: x.env, taskDef: d.taskDef, parts: [], row: x });
+    m.t = Math.min(m.t, t); m.parts.push(d);
+  }
+  return Object.values(byKey);
+}
+function errSeries() {
+  const s = T?.series || {}, a = s.elb5xx || [], b = s.e5xx || [];
+  return Array.from({ length: Math.max(a.length, b.length, T?.hours || 0) }, (_, i) => (a[i] || 0) + (b[i] || 0));
+}
+function markScore(m, t0, err) { // errors in the 3 h after a deploy against the 3 h before: the deploy worth looking at first
+  const h = Math.floor((m.t - t0) / 3600e3), sum = (a, b) => err.slice(Math.max(0, a), Math.max(0, b)).reduce((x, y) => x + y, 0);
+  return m.kind === 'deploy' ? sum(h + 1, h + 4) - sum(h - 2, h + 1) : -Infinity;
+}
+let TL_MARKS = [];
+function renderTimeline() {
+  const hist = CH?.history || [];
+  const anyDeploys = (A?.ecs || []).some((x) => (x.deploys || []).length);
+  $('#tab-timeline').hidden = !(CH || (!DESIGN && anyDeploys));
+  $('#drift-tl').innerHTML = driftHtml();
+  const cur = hist.find((h) => h.snapshot === CH?.snapshot);
+  $('#tl-since').textContent = CH ? (CH.previous ? `since ${CH.since ? when(CH.since) : CH.previous}` : 'first build') : '';
+  $('#tl-changes').innerHTML = CH ? (cur?.items?.length ? cur.items.map((x) => `<li>${esc(x)}</li>`).join('') : `<li>${esc(CH.summary)}</li>`) : '<li>No snapshot yet: the next build records one.</li>';
+  if (DESIGN || !T) {
+    $('#tl-kicker').textContent = DESIGN ? 'What changed · from files' : 'What changed';
+    $('#tl-title').textContent = 'Builds of this project';
+    $('#tl-chart').innerHTML = `<ul class="tl-list">${hist.map((h, i) => `<li class="mk" data-mk="${i}" tabindex="0" role="button">${esc(when(h.at))} · ${esc(h.summary)}</li>`).join('')}</ul>`;
+    $('#tl-chart').querySelectorAll('.mk').forEach((el) => { const go = () => showMark(+el.dataset.mk);
+      el.addEventListener('click', go); el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } }); });
+    $('#tl-hint').textContent = DESIGN ? 'Design mode reads no AWS account, so there are no deploys or errors to put on a time axis. Each build of the files is listed above.' : 'No hourly metrics in this build.';
+    TL_MARKS = hist.map((h) => ({ kind: 'build', t: new Date(h.at).getTime(), h }));
+    $('#tl-note').textContent = `${hist.length} build${hist.length === 1 ? '' : 's'}`;
+    if (TL_MARKS.length) showMark(0);
+    return;
+  }
+  const hours = Math.max(1, Math.min(24 * 14, Math.round(Number(T.hours) || errSeries().length || 72))), t0 = new Date(T.start).getTime(), t1 = t0 + hours * 3600e3, err = errSeries();
+  const deploys = deployMarks(t0, t1), builds = hist.map((h) => ({ kind: 'build', t: new Date(h.at).getTime(), h })).filter((m) => m.t >= t0 && m.t <= t1 + 60e3);
+  const svcs = [...new Set(deploys.sort((a, b) => (a.env !== 'prod') - (b.env !== 'prod') || a.t - b.t).map((m) => m.svc))];
+  const lanes = svcs.slice(0, 9), laneOf = (m) => (m.kind === 'build' ? 0 : 1 + Math.min(lanes.length, lanes.indexOf(m.svc) < 0 ? lanes.length : lanes.indexOf(m.svc)));
+  const nLanes = 1 + lanes.length + (svcs.length > lanes.length ? 1 : 0);
+  const W = 1180, L = 168, R = 46, CT = 14, CH_ = 120, LH = 26, LT = CT + CH_ + 16, H = LT + nLanes * LH + 26;
+  const x = (t) => L + ((t - t0) / (t1 - t0)) * (W - L - R), max = Math.max(1, ...err) * 1.1, y = (v) => CT + (1 - v / max) * CH_;
+  const bw = (W - L - R) / hours;
+  const g = [];
+  [0, max / 2].forEach((v) => g.push(`<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)" stroke-dasharray="${v ? '2 4' : ''}"/><text x="${L - 8}" y="${y(v) + 3}" text-anchor="end" fill="var(--muted)" font-size="10">${esc(kfmt(Math.round(v)))}</text>`));
+  g.push(`<text x="${L - 8}" y="${CT + 2}" text-anchor="end" fill="var(--red)" font-size="10.5" font-family="var(--f-mono)">5xx / hour</text>`);
+  err.forEach((v, i) => g.push(`<rect x="${(L + i * bw + 0.6).toFixed(1)}" y="${y(v).toFixed(1)}" width="${Math.max(1, bw - 1.2).toFixed(1)}" height="${(y(0) - y(v)).toFixed(1)}" fill="var(--red)" fill-opacity="${v > max / 4 ? 0.85 : 0.45}"><title>${esc(when(t0 + i * 3600e3))} · ${esc(kfmt(v))} errors</title></rect>`));
+  const laneLabel = (k) => { const m = deploys.find((d) => d.svc === k); return m.env === 'prod' ? m.name : `${m.name} (${m.env})`; };
+  const laneNames = ['Hopscope builds', ...lanes.map(laneLabel), ...(svcs.length > lanes.length ? ['other services'] : [])];
+  laneNames.forEach((n, i) => { const ly = LT + i * LH + LH / 2;
+    g.push(`<line x1="${L}" x2="${W - R}" y1="${ly}" y2="${ly}" stroke="var(--line)"/><text x="${L - 8}" y="${ly + 3.5}" text-anchor="end" fill="${i ? 'var(--ink)' : 'var(--muted)'}" font-size="11" font-family="var(--f-mono)">${esc(n.length > 24 ? '…' + n.slice(-23) : n)}</text>`); });
+  for (let k = 0; k <= hours; k += 6) { const tx = x(t0 + k * 3600e3);
+    g.push(`<line x1="${tx}" x2="${tx}" y1="${CT}" y2="${H - 22}" stroke="var(--line)" stroke-opacity="${k % 24 ? 0.35 : 0.9}"/><text x="${tx}" y="${H - 8}" text-anchor="middle" fill="var(--muted)" font-size="10">${esc(tick(t0 + k * 3600e3))}</text>`); }
+  TL_MARKS = [...builds, ...deploys].sort((a, b) => a.t - b.t);
+  TL_MARKS.forEach((m, i) => { const mx = x(m.t), my = LT + laneOf(m) * LH + LH / 2, col = m.kind === 'build' ? 'var(--signal)' : 'var(--violet)';
+    const lab = m.kind === 'build' ? 'build' : (m.taskDef || '').split(':').pop();
+    const aria = m.kind === 'build' ? `Hopscope build ${when(m.t)}: ${m.h.summary}` : `${m.svc} ${m.taskDef} at ${when(m.t)}`;
+    g.push(`<g class="mk" data-mk="${i}" tabindex="0" role="button" aria-label="${esc(aria)}"><line x1="${mx}" x2="${mx}" y1="${CT}" y2="${my}" stroke="${col}" stroke-opacity=".45" stroke-dasharray="3 3"/>
+      <circle cx="${mx}" cy="${my}" r="7" fill="${col}" stroke="var(--panel)" stroke-width="2"/><text x="${mx > W - R - 60 ? mx - 10 : mx + 10}" y="${my + 4}" text-anchor="${mx > W - R - 60 ? 'end' : 'start'}" fill="${col}" font-size="10.5" font-family="var(--f-mono)">${esc(m.kind === 'build' ? lab : 'rev ' + lab)}</text><title>${esc(aria)}</title></g>`); });
+  $('#tl-chart').innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Deploys and Hopscope builds over the last ${hours} hours next to 5xx errors per hour">${g.join('')}</svg>`;
+  $('#tl-note').textContent = `${deploys.length} deploy${deploys.length === 1 ? '' : 's'} · ${builds.length} build${builds.length === 1 ? '' : 's'} · ${A?.region ? esc(A.region) : ''}`;
+  $('#tl-chart').querySelectorAll('.mk').forEach((el) => { const go = () => showMark(+el.dataset.mk);
+    el.addEventListener('click', go); el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } }); });
+  let best = -1, top = -Infinity;
+  TL_MARKS.forEach((m, i) => { const sc = markScore(m, t0, err); if (sc > top) { top = sc; best = i; } });
+  showMark(best >= 0 ? best : TL_MARKS.length - 1);
+}
+function showMark(i) {
+  const m = TL_MARKS[i];
+  if (!m) return;
+  $('#tl-chart').querySelectorAll('.mk').forEach((el) => el.classList.toggle('on', +el.dataset.mk === i));
+  $('#tl-d-when').textContent = when(m.t);
+  if (m.kind === 'build') {
+    $('#tl-d-title').textContent = 'Hopscope build';
+    $('#tl-detail').innerHTML = `<p><b>${esc(m.h.summary)}</b></p><p class="hint">Snapshot ${esc(m.h.snapshot)}${m.h.since ? ` · compared with the build of ${esc(when(m.h.since))}` : ''}</p>
+      <ul class="tl-list">${(m.h.items || []).map((x) => `<li>${esc(x)}</li>`).join('') || '<li>Nothing to compare yet.</li>'}</ul>`;
+    return;
+  }
+  const revs = (m.row.deploys || []).filter((d) => d.kind === 'revision').sort((a, b) => (a.at < b.at ? 1 : -1));
+  const idx = revs.findIndex((d) => d.taskDef === m.taskDef), prev = idx >= 0 ? revs[idx + 1] : null;
+  const evs = (m.row.deploys || []).filter((d) => d.kind === 'event' && Math.abs(new Date(d.at).getTime() - m.t) <= 6 * 3600e3 && new Date(d.at).getTime() >= m.t - 1800e3)
+    .sort((a, b) => (a.at < b.at ? -1 : 1));
+  const err = errSeries(), t0 = new Date(T.start).getTime(), h = Math.floor((m.t - t0) / 3600e3);
+  const before = err[h] ?? 0, after = Math.max(0, ...err.slice(h + 1, h + 5));
+  $('#tl-d-title').textContent = `${m.name} → ${m.taskDef}`;
+  $('#tl-detail').innerHTML = `<p>${esc(m.svc)} ${m.parts.some((d) => d.kind === 'deployment') ? 'deployed' : 'registered'} <b>${esc(m.taskDef)}</b>${prev ? `, replacing ${esc(prev.taskDef)} (registered ${esc(when(prev.at))})` : ''}.</p>
+    ${m.parts.map((d) => `<p class="hint">${d.kind === 'deployment' ? `ECS deployment ${esc(d.status)} ${esc(d.rollout)}, started ${esc(when(d.at))}${d.updated ? `, last updated ${esc(when(d.updated))}` : ''}` : `Revision registered ${esc(when(d.at))}`}</p>`).join('')}
+    <p>5xx: <b>${esc(kfmt(before))}</b> in the hour it went out, peak <b style="${after > Math.max(20, before * 5) ? 'color:var(--red)' : ''}">${esc(kfmt(after))}</b> per hour in the 4 hours after.</p>
+    ${evs.length ? `<ul class="tl-list">${evs.map((d) => `<li class="${/fail|stopped|unhealthy/i.test(d.msg) ? 'bad' : 'dep'}">${esc(when(d.at))} · ${esc(d.msg)}</li>`).join('')}</ul>` : '<p class="hint">No service events around this deploy.</p>'}`;
+}
+
+const START_VIEW = location.hash.slice(1);
+showView(START_VIEW || 'overview');
 { const vb = $('#voice'); vb.setAttribute('aria-pressed', VOICE); vb.textContent = VOICE ? 'Voice on' : 'Voice off'; if (!synth) { vb.disabled = true; vb.textContent = 'Voice unavailable'; } }
 const load = (f, fallback) => fetch(f).then((r) => (r.ok ? r.json() : fallback)).catch(() => fallback);
-Promise.all([load('code.json', null), load('aws.json', null), load('flows.json', {}), load('ts.json', null), load('model.json', null)]).then(([d, a, fl, ts, model]) => {
+Promise.all([load('code.json', null), load('aws.json', null), load('flows.json', {}), load('ts.json', null), load('model.json', null), load('changes.json', null), load('drift.json', null)]).then(([d, a, fl, ts, model, ch, dr]) => {
   if (!d || !model) throw new Error('missing data');
+  CH = ch && typeof ch === 'object' ? ch : null; DR = dr && typeof dr === 'object' ? dr : null;
   D = d; F = fl; M = model; DESIGN = M.meta.mode === 'design'; T = DESIGN ? null : ts;
   // Any collector may have been skipped (no permission, service unused): default every field so views still render.
   A = a && { lb: [], ecs: [], ec2: [], rds: [], sqs: [], sns: [], lambda: [], cache: [], search: [], apigw: [], cdn: [], cognito: [], dynamodb: [], ses: [], eventbridge: [],
@@ -1428,7 +1576,8 @@ Promise.all([load('code.json', null), load('aws.json', null), load('flows.json',
   $('#spend tbody').innerHTML = SPEND.map(([n, c]) => `<tr><td>${esc(n)}</td><td style="width:40%"><div class="costbar" style="width:${(c / maxSpend) * 100}%"></div></td><td class="num">${c.toFixed(2)}</td></tr>`).join('');
   $('#savings tbody').innerHTML = SAVINGS.length ? SAVINGS.map(([n, s]) => `<tr><td>${esc(n)}</td><td class="num">${esc(s)}</td></tr>`).join('') : '<tr><td colspan="2" class="hint">No savings found.</td></tr>';
   if (A) { renderComponents(); renderAwsArch(); }
-  renderOps(); renderOverview(); renderTree();
+  renderOps(); renderOverview(); renderTree(); renderTimeline();
+  if (START_VIEW === 'timeline') showView('timeline');
   $('#cat-count').textContent = `${d.routes.length} APIs by system`;
   const top = D.modules.find((m) => m.parent === null && m.files > 0); if (top) showModule(top.id);
   const first = candidates(EXAMPLES[0])[0];

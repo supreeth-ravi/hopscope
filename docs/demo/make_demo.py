@@ -20,7 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "skills" / "hopscope" / "scripts"
 OUT = Path(__file__).resolve().parent
-SITE_FILES = ("code.json", "aws.json", "flows.json", "ts.json", "model.json")
+SITE_FILES = ("code.json", "aws.json", "flows.json", "ts.json", "model.json", "changes.json", "drift.json")
 COLLECTED = datetime(2026, 11, 2, 6, 30, tzinfo=timezone.utc)
 RNG = random.Random(7)
 SQS = "https://sqs.us-east-1.amazonaws.com/************/"
@@ -28,6 +28,64 @@ SQS = "https://sqs.us-east-1.amazonaws.com/************/"
 # ---------------------------------------------------------------- fake codebase
 
 DOCKERFILE = "FROM python:3.12-slim\nWORKDIR /app\nCOPY . .\nRUN pip install -r requirements.txt\nCMD [\"python\", \"-m\", \"{mod}\"]\n"
+
+def tf_service(name: str, desired: int, image: str = "") -> str:
+    image = image or f"${{aws_ecr_repository.{name.replace('-', '_')}.repository_url}}:latest"
+    return f'''
+resource "aws_ecs_task_definition" "{name.replace('-', '_')}" {{
+  family                = "kestrel-{name}"
+  container_definitions = jsonencode([{{ name = "{name}", image = "{image}" }}])
+}}
+
+resource "aws_ecs_service" "{name.replace('-', '_')}" {{
+  name            = "{name}"
+  cluster         = aws_ecs_cluster.kestrel.id
+  task_definition = aws_ecs_task_definition.{name.replace('-', '_')}.arn
+  desired_count   = {desired}
+}}
+'''
+
+
+INFRA_TF = ('''resource "aws_ecs_cluster" "kestrel" {
+  name = "kestrel"
+}
+''' + "".join(tf_service(n, d) for n, d in (("shop-api", 2), ("storefront", 2), ("order-worker", 1), ("notify-worker", 1), ("admin", 1), ("roast-planner", 0)))
+    + tf_service("grafana", 1, "grafana/grafana:11.2.0") + '''
+resource "aws_sqs_queue" "orders" {
+  name           = "kestrel-orders.fifo"
+  redrive_policy = jsonencode({ deadLetterTargetArn = aws_sqs_queue.orders_dlq.arn, maxReceiveCount = 5 })
+}
+
+resource "aws_sqs_queue" "orders_dlq" {
+  name = "kestrel-orders-dlq.fifo"
+}
+
+resource "aws_sqs_queue" "notify" {
+  name = "kestrel-notify.fifo"
+}
+
+resource "aws_sqs_queue" "wholesale" {
+  name = "kestrel-wholesale.fifo"
+}
+
+resource "aws_rds_cluster" "shop" {
+  cluster_identifier = "kestrel-db"
+  engine             = "aurora-postgresql"
+  serverlessv2_scaling_configuration {
+    min_capacity = 0.5
+    max_capacity = 4
+  }
+}
+
+resource "aws_elasticache_replication_group" "cache" {
+  replication_group_id = "kestrel-cache"
+  engine               = "valkey"
+}
+
+resource "aws_lb" "public" {
+  name = "kestrel-public"
+}
+''')
 
 CODE: dict[str, str] = {
     # shop-api: the public API behind shop.kestrel.example
@@ -353,6 +411,9 @@ app.get('/orders', async (req, res) => res.json((await db.query('select * from o
 app.post('/beans/:id/stock', async (req, res) => res.json((await db.query('update beans set stock = $1 where id = $2', [req.body.stock, req.params.id])).rowCount));
 app.listen(4000);
 ''',
+    # infra: the Terraform the team applies. It has drifted: no recommendations service or analytics-old database
+    # (both made by hand), no promo-campaign queues, and a wholesale queue that was never applied.
+    "infra/main.tf": INFRA_TF,
 }
 
 
@@ -371,12 +432,70 @@ def ecs(cluster, n, image, env, cpu, mem, size="0.5 vCPU · 1 GB", refs=(), tgs=
             "env": env, "cpu": cpu, "mem": mem, "memMax": round(mem * 1.08, 3), "cpuMax": round(cpu * 3.1, 3)}
 
 
-def inventory() -> dict:
+# ---------------------------------------------------------------- fake deploy history
+
+START = COLLECTED - timedelta(hours=72)  # the first hour of ts.json
+STAGES = (12, 36, 72)  # hours after START when earlier builds ran (Fri evening, Sat evening) and this one
+
+
+def at(h: float) -> str:
+    return (START + timedelta(hours=h)).isoformat(timespec="seconds")
+
+
+# task-definition revisions per service: (revision, hour registered); negative hours are before the 72-hour window
+REVISIONS = {
+    "prod-kestrel/shop-api": [(39, -420), (40, -260), (41, -130), (42, 49.58), (43, 53.7)],
+    "prod-kestrel/storefront": [(16, -380), (17, -200), (18, 20.0)],
+    "prod-kestrel/order-worker": [(8, -300), (9, 31.5)],
+    "prod-kestrel/notify-worker": [(5, -400)], "prod-kestrel/admin": [(12, -250)], "prod-kestrel/roast-planner": [(3, -500)],
+    "prod-kestrel/recommendations": [(2, -900)], "prod-kestrel/grafana": [(1, -1000)],
+    "staging-kestrel/shop-api": [(87, -60), (88, 46.0)], "staging-kestrel/storefront": [(30, -150), (31, 18.5)], "staging-kestrel/order-worker": [(14, -90)],
+}
+SHOP_EVENTS = [  # the Sunday checkout outage, as ECS reported it
+    (49.66, "(service shop-api) has started 2 tasks: (task 3f9e1c2a) (task 5d07b6e1)."),
+    (49.83, "(service shop-api) has reached a steady state."),
+    (50.25, "(service shop-api) (task 3f9e1c2a) failed ELB health checks in (target-group shop-api)."),
+    (50.3, "(service shop-api) has stopped 1 running tasks: (task 3f9e1c2a)."),
+    (50.36, "(service shop-api) has started 1 tasks: (task 7b2d4e8f)."),
+    (51.4, "(service shop-api) (task 7b2d4e8f) failed ELB health checks in (target-group shop-api)."),
+    (51.45, "(service shop-api) has stopped 1 running tasks: (task 7b2d4e8f)."),
+    (52.6, "(service shop-api) (task 5d07b6e1) failed ELB health checks in (target-group shop-api)."),
+    (53.75, "(service shop-api) has started 2 tasks: (task 0c4a9d13) (task e81f2b70)."),
+    (53.95, "(service shop-api) has reached a steady state."),
+    (54.2, "(service shop-api) has started 1 tasks: (task 9a6c3e55)."),
+    (54.4, "(service shop-api) has reached a steady state."),
+]
+
+
+def add_deploys(row: dict, hour: float) -> None:
+    """taskDef, taskDefAt and deploys for one ECS row as the collector would have seen them `hour` hours into the window."""
+    key = f'{row["cluster"]}/{row["n"]}'
+    image = row["images"][0]
+    family = ("staging-" if row["cluster"].startswith("staging") else "") + (image if image.startswith("kestrel-") else f'kestrel-{row["n"]}')
+    revs = [(r, h) for r, h in REVISIONS.get(key, []) if h <= hour]
+    rev, reg = revs[-1]
+    row["taskDef"], row["taskDefAt"] = f"{family}:{rev}", at(reg)
+    events = [(h, m) for h, m in SHOP_EVENTS if key == "prod-kestrel/shop-api" and h <= hour]
+    for r, h in revs:
+        if r not in (42, 43) or key != "prod-kestrel/shop-api":  # the outage and the rollback have their own events
+            events += [(h + 0.08, f'(service {row["n"]}) has started {max(1, row["running"])} tasks.'), (h + 0.25, f'(service {row["n"]}) has reached a steady state.')]
+    events = sorted((e for e in events if e[0] <= hour), reverse=True)
+    row["steadyEvents"] = sum(1 for _, m in events if "steady state" in m)  # the collector counts these instead of keeping them
+    events = [e for e in events if "steady state" not in e[1]][:20]
+    row["deploys"] = sorted(
+        [{"kind": "deployment", "at": at(reg + 0.05), "updated": at(reg + 0.25), "status": "PRIMARY", "rollout": "COMPLETED", "taskDef": row["taskDef"],
+          "desired": row["desired"], "running": row["running"]}]
+        + [{"kind": "revision", "at": at(h), "taskDef": f"{family}:{r}"} for r, h in revs[-5:]]
+        + [{"kind": "event", "at": at(h), "msg": m} for h, m in events], key=lambda d: d["at"], reverse=True)
+
+
+def inventory(hour: float = 72) -> dict:
+    """The account at `hour` hours into the window: earlier builds see older revisions and fewer queues."""
     prod, stg = "prod-kestrel", "staging-kestrel"
     queue_refs = [("ORDERS_QUEUE_URL", SQS + "kestrel-orders.fifo"), ("NOTIFY_QUEUE_URL", SQS + "kestrel-notify.fifo")]
     redis = ("REDIS_URL", "rediss://master.kestrel-cache.xxxxxxxx.use1.cache.amazonaws.com:6379")
     services = [
-        ecs(prod, "shop-api", "kestrel-shop-api", "prod", 18.4, 61.2, "1 vCPU · 2 GB", [redis, queue_refs[0]], tgs=True, running=2),
+        ecs(prod, "shop-api", "kestrel-shop-api", "prod", 18.4, 61.2, "1 vCPU · 2 GB", [redis, queue_refs[0]], tgs=True, running=3 if hour >= 54.2 else 2),
         ecs(prod, "storefront", "kestrel-storefront", "prod", 9.7, 38.5, tgs=True, running=2),
         ecs(prod, "order-worker", "kestrel-order-worker", "prod", 4.2, 33.0, "0.25 vCPU · 0.5 GB", queue_refs),
         ecs(prod, "notify-worker", "kestrel-notify-worker", "prod", 1.1, 22.4, "0.25 vCPU · 0.5 GB", [queue_refs[1]]),
@@ -400,7 +519,9 @@ def inventory() -> dict:
         {"n": "kestrel-notify.fifo", "sent": 21110, "backlog": 0.0, "age": 1.0, "dlq": False, "fifo": True, "fam": "kestrel-notify.fifo"},
         {"n": "kestrel-orders-dlq.fifo", "sent": 0, "backlog": 37.0, "age": 151200.0, "dlq": True, "fifo": True, "fam": "kestrel-orders-dlq.fifo"},
         {"n": "staging-kestrel-orders.fifo", "sent": 12, "backlog": 0.0, "age": 0.0, "dlq": False, "fifo": True, "fam": "staging-kestrel-orders.fifo"},
-    ] + [{"n": f"promo-campaign-{i:02d}", "sent": 0, "backlog": 0.0, "age": 0.0, "dlq": False, "fifo": False, "fam": "promo-campaign-*"} for i in range(1, 15)]
+    ] + [{"n": f"promo-campaign-{i:02d}", "sent": 0, "backlog": 0.0, "age": 0.0, "dlq": False, "fifo": False, "fam": "promo-campaign-*"} for i in range(1, 15 if hour >= 30 else 14)]
+    for row in services:
+        add_deploys(row, hour)
     lambdas = [
         {"n": "image-resize", "mem": 1024, "inv": 3820, "err": 0.0, "dur": 412.0, "fam": "image-resize"},
         {"n": "stock-sync", "mem": 256, "inv": 288, "err": 3.0, "dur": 950.0, "fam": "stock-sync"},
@@ -419,7 +540,7 @@ def inventory() -> dict:
          "clusterEndpoint": f"analytics-old.cluster-{rds_host}", "env": "prod"},
     ]
     return {
-        "collectedAt": COLLECTED.isoformat(), "region": "us-east-1", "account": "••••••••0000",
+        "collectedAt": (START + timedelta(hours=hour)).isoformat(), "region": "us-east-1", "account": "••••••••0000",
         "ecs": services,
         "ec2": [
             {"id": "i-00000000000000001", "n": "bastion", "type": "t4g.nano", "state": "running", "env": "prod", "cpu": 0.4, "cpuMax": 2.1,
@@ -484,20 +605,36 @@ def run(script: str, *args: str) -> None:
     subprocess.run([sys.executable, str(SCRIPTS / script), *args], check=True)
 
 
+def quiet_before_outage(ts: dict) -> dict:
+    """The same hours as an earlier build would have seen them: no Sunday spike yet."""
+    out = json.loads(json.dumps(ts))
+    for k in ("elb5xx", "elb503", "e5xx"):
+        vals = out["series"][k]
+        usual = sorted(vals)[len(vals) // 2]
+        out["series"][k] = [min(v, usual * 2) for v in vals]
+    return out
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
-        repo, data = Path(tmp) / "kestrel", Path(tmp) / "data"
+        repo, work = Path(tmp) / "kestrel", Path(tmp) / "work"
+        data = work / "data"
         write_codebase(repo)
-        data.mkdir()
+        data.mkdir(parents=True)
         overrides = Path(tmp) / "hopscope.json"
         overrides.write_text(json.dumps({"company": "Kestrel Coffee"}), encoding="utf-8")
-        (data / "aws.json").write_text(json.dumps(inventory(), ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-        (data / "ts.json").write_text(json.dumps(timeseries(), separators=(",", ":")), encoding="utf-8")
+        ts = timeseries()
         run("code_scan.py", "--repo", str(repo), "--no-floorplan", "--out", str(data / "code.json"))
         run("call_flow.py", str(data / "code.json"), str(data / "flows.json"))
-        run("linker.py", "--aws", str(data / "aws.json"), "--code", str(data / "code.json"), "--overrides", str(overrides),
-            "--out", str(data / "links.json"))
-        run("rules.py", "--data", str(data), "--overrides", str(overrides))
+        run("iac_scan.py", "--code", str(data / "code.json"), "--region", "us-east-1", "--optional", "--out", str(data / "iac.json"))
+        for hour in STAGES:  # two earlier builds, then this one: each is snapshotted, so changes.json has history
+            (data / "aws.json").write_text(json.dumps(inventory(hour), ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            (data / "ts.json").write_text(json.dumps(ts if hour == STAGES[-1] else quiet_before_outage(ts), separators=(",", ":")), encoding="utf-8")
+            run("linker.py", "--aws", str(data / "aws.json"), "--code", str(data / "code.json"), "--overrides", str(overrides),
+                "--out", str(data / "links.json"))
+            run("drift.py", "--data", str(data))
+            run("rules.py", "--data", str(data), "--overrides", str(overrides))
+            run("history.py", "--data", str(data), "--workdir", str(work))
         for f in SITE_FILES:
             text = (data / f).read_text(encoding="utf-8").replace(str(repo), "/home/demo/kestrel").replace(tmp, "/home/demo")
             (OUT / f).write_text(text, encoding="utf-8")

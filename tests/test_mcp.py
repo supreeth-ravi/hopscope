@@ -41,7 +41,7 @@ def test_initialize_and_list(tmp_path: Path) -> None:
     init = out[0]["result"]
     assert init["protocolVersion"] == "2025-06-18" and "tools" in init["capabilities"] and init["serverInfo"]["name"] == "hopscope"
     names = {t["name"] for t in out[1]["result"]["tools"]}
-    assert names == {"find_routes", "trace", "who_calls", "what_runs", "impact", "resources", "health"}
+    assert names == {"find_routes", "trace", "who_calls", "what_runs", "impact", "resources", "health", "changes", "drift"}
     for t in out[1]["result"]["tools"]:
         assert t["inputSchema"]["type"] == "object" and t["description"] and t["annotations"]["readOnlyHint"] is True
     assert out[2]["result"] == {}
@@ -161,3 +161,43 @@ def test_non_ascii_survives_a_legacy_console_encoding(tmp_path: Path) -> None:
                        env={"PATH": "/usr/bin:/bin", "PYTHONIOENCODING": "cp1252"})
     lines = [json.loads(ln) for ln in p.stdout.decode("utf-8").splitlines() if ln.strip()]
     assert json.loads(lines[1]["result"]["content"][0]["text"])["rows"][0]["n"] == "café-api ☕"
+
+
+def test_changes_and_drift_tools(tmp_path: Path) -> None:
+    w = workdir(tmp_path)
+    (w / "data" / "changes.json").write_text(json.dumps({
+        "snapshot": "20261102T063000Z", "previous": "20261101T063000Z", "at": "2026-11-02T06:30:00+00:00", "summary": "1 changed",
+        "added": [], "removed": [], "changed": [{"kind": "ecs", "name": "c/<b>api</b>", "field": "taskDef", "from": "a:1", "to": "a:2" + "x" * 900}],
+        "links": [], "actions": {"new": [], "resolved": []}, "history": [{"snapshot": "20261102T063000Z", "summary": "1 changed"}]}))
+    (w / "data" / "drift.json").write_text(json.dumps({"mode": "live", "summary": "1 finding", "checked": ["x"], "skipped": [],
+        "findings": [{"kind": "aws_not_in_files", "severity": "warn", "title": "t", "detail": "d", "evidence": ["e"], "resource": "r", "confidence": "high"}],
+        "uncertain": []}))
+    out, _ = session([INIT, call(2, "changes", {}), call(3, "drift", {"kind": "aws_not_in_files"}), call(4, "drift", {"kind": "nope"}),
+                      call(5, "changes", {"since": "19990101"})], ["--workdir", str(w)])
+    ch = out[1]["result"]["structuredContent"]
+    assert out[1]["result"]["isError"] is False and ch["summary"] == "1 changed" and len(ch["lines"][0]) <= 300
+    assert ch["lines"][0].startswith("~ c/<b>api</b> task definition: a:1")  # text is capped; escaping is the reader's job (console uses esc())
+    dr = out[2]["result"]["structuredContent"]
+    assert dr["total"] == 1 and dr["findings"][0]["evidence"] == ["e"]
+    assert out[3]["result"]["structuredContent"]["total"] == 0
+    assert out[4]["result"]["isError"] is True and "no snapshot" in out[4]["result"]["structuredContent"]["error"]
+
+
+def test_changes_and_drift_without_data_are_tool_errors(tmp_path: Path) -> None:
+    w = workdir(tmp_path)
+    for f in ("changes.json", "drift.json"):
+        (w / "data" / f).unlink(missing_ok=True)
+    out, _ = session([INIT, call(2, "changes", {}), call(3, "drift", {})], ["--workdir", str(w)])
+    assert out[1]["result"]["isError"] is True and "no changes.json" in out[1]["result"]["structuredContent"]["error"]
+    assert out[2]["result"]["isError"] is True
+
+
+def test_demo_answers_what_changed_before_the_sunday_outage(tmp_path: Path) -> None:
+    out, _ = session([INIT, call(2, "changes", {}), call(3, "drift", {})], ["--workdir", str(workdir(tmp_path))])
+    ch, dr = out[1]["result"]["structuredContent"], out[2]["result"]["structuredContent"]
+    assert "~ prod-kestrel/shop-api task definition: kestrel-shop-api:41 → kestrel-shop-api:43" in ch["lines"]
+    assert any(d["taskDef"] == "kestrel-shop-api:42" and d["at"].startswith("2026-11-01T08:") for d in ch["deploys"])
+    found = {(f["kind"], f["resource"]) for f in dr["findings"]}
+    assert ("aws_not_in_files", "analytics-old") in found and ("files_not_deployed", "kestrel-wholesale.fifo") in found
+    model = json.loads((DEMO / "model.json").read_text())
+    assert model["actions"][1][1].startswith("Errors jumped") and "kestrel-shop-api:42" in model["actions"][1][1]

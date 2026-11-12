@@ -47,6 +47,45 @@ def test_no_files_is_an_error(tmp_path: Path) -> None:
         raise AssertionError("expected SystemExit")
 
 
+def test_optional_scan_with_no_files_removes_a_stale_inventory(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("x = 1\n")
+    code = tmp_path / "code.json"
+    code.write_text(json.dumps({"base": str(tmp_path)}))
+    out = tmp_path / "iac.json"
+    out.write_text("{}")
+    iac_scan.main(["--code", str(code), "--out", str(out), "--optional"])
+    assert not out.exists()
+
+
+def test_terraform_rows_say_whether_the_desired_count_is_literal(tmp_path: Path) -> None:
+    infra = tmp_path / "infra"
+    infra.mkdir()
+    (infra / "main.tf").write_text('''resource "aws_ecs_task_definition" "api" {
+  family = "shop-api"
+}
+resource "aws_ecs_service" "api" {
+  name            = "api"
+  desired_count   = 3
+  task_definition = aws_ecs_task_definition.api.arn
+}
+resource "aws_ecs_service" "worker" {
+  name          = "worker"
+  desired_count = var.workers
+}
+''')
+    inv = iac_scan.scan(tmp_path, "design")
+    rows = {r["n"]: r for r in inv["ecs"]}
+    assert rows["api"]["desiredSet"] is True and rows["api"]["desired"] == 3 and rows["api"]["taskFamily"] == "shop-api"
+    assert rows["worker"]["desiredSet"] is False and rows["worker"]["taskFamily"] == ""
+    assert rows["api"]["nameVar"] is False
+
+
+def test_terraform_rows_say_when_a_name_came_from_a_variable(tmp_path: Path) -> None:
+    (tmp_path / "q.tf").write_text('resource "aws_sqs_queue" "orders" {\n  name = "${var.env}-orders"\n}\nresource "aws_sqs_queue" "jobs" {\n  name = "jobs"\n}\n')
+    rows = {r["n"]: r for r in iac_scan.scan(tmp_path, "design")["sqs"]}
+    assert rows["orders"]["nameVar"] is True and rows["jobs"]["nameVar"] is False
+
+
 def test_terraform_files_in_one_folder_are_read_together(tmp_path: Path) -> None:
     infra = tmp_path / "infra"
     infra.mkdir()

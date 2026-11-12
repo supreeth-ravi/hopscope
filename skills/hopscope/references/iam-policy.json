@@ -8,7 +8,7 @@
         "sts:GetCallerIdentity",
         "cloudwatch:GetMetricData",
         "ce:GetCostAndUsage",
-        "ecs:ListClusters", "ecs:ListServices", "ecs:DescribeServices", "ecs:DescribeTaskDefinition",
+        "ecs:ListClusters", "ecs:ListServices", "ecs:DescribeServices", "ecs:DescribeTaskDefinition", "ecs:ListTaskDefinitions",
         "ec2:DescribeInstances", "ec2:DescribeVolumes", "ec2:DescribeInstanceCreditSpecifications", "ec2:DescribeNatGateways", "ec2:DescribeAddresses",
         "rds:DescribeDBInstances", "rds:DescribeDBClusters",
         "elasticloadbalancing:DescribeLoadBalancers", "elasticloadbalancing:DescribeListeners", "elasticloadbalancing:DescribeRules",

@@ -3,6 +3,7 @@
 aws.json, so Hopscope works with no AWS account. Writes an inventory marked "mode": "design".
 
     python iac_scan.py --code data/code.json [--region eu-west-1] --out data/aws.json
+    python iac_scan.py --code data/code.json --out data/iac.json --optional   # live mode: the files, for drift checks
 """
 from __future__ import annotations
 
@@ -149,9 +150,14 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--code", required=True, help="code.json from code_scan.py (its base is scanned)")
     ap.add_argument("--region", default="design")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--optional", action="store_true", help="live mode: no infrastructure files is fine (writes nothing, removes a stale --out)")
     a = ap.parse_args(argv)
     base = Path(json.loads(Path(a.code).read_text())["base"])
     inv = scan(base, a.region)
+    if not inv["sources"] and a.optional:
+        Path(a.out).unlink(missing_ok=True)
+        print(f"no infrastructure files under {base}: drift checks against files are skipped")
+        return
     if not inv["sources"]:
         msg = f"no infrastructure files found under {base} (looked for docker compose, Terraform and CloudFormation/SAM)."
         if inv["skipped"]:

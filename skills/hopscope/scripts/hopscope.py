@@ -9,6 +9,8 @@
     hopscope.py impact  <file>   [--workdir …]  # what a change to this file can break
     hopscope.py query   "<METHOD /path>" [--workdir …]  # what one route touches, step by step
     hopscope.py export  --format mermaid|drawio [--route "<METHOD /path>"] --out FILE [--workdir …]
+    hopscope.py changes [--since <snapshot>] [--workdir …]  # what changed since the last build (or a named snapshot)
+    hopscope.py drift   [--workdir …]       # where code, infrastructure files and AWS disagree
 
 Data goes to <workdir>/data, the site to <workdir>/site (index.html + JSON files).
 """
@@ -25,6 +27,7 @@ import threading
 from functools import partial
 from pathlib import Path
 
+import hopscope_changes
 import hopscope_export
 import hopscope_query
 import hopscope_text
@@ -32,7 +35,8 @@ import local_agent
 
 HERE = Path(__file__).resolve().parent
 TEMPLATE = HERE.parent / "assets" / "console.html"
-SITE_FILES = ("code.json", "aws.json", "flows.json", "ts.json", "model.json")
+SITE_FILES = ("code.json", "aws.json", "flows.json", "ts.json", "model.json", "changes.json", "drift.json")
+OPTIONAL = ("flows.json", "ts.json", "changes.json", "drift.json")
 
 
 def run(script: str, *args: str) -> None:
@@ -42,24 +46,43 @@ def run(script: str, *args: str) -> None:
         raise SystemExit(f"{script} failed (exit {res.returncode}); see the message above.")
 
 
+def try_run(script: str, out: Path, *args: str) -> None:
+    """A step whose failure must not stop the build: warn, drop its stale output and carry on."""
+    out.unlink(missing_ok=True)
+    try:
+        run(script, *args)
+    except SystemExit as e:
+        print(f"warning: {e} The rest of the build continues without it.")
+
+
+def snapshot(a: argparse.Namespace, data: Path) -> None:
+    """Keep a snapshot of this build and write changes.json; never fatal."""
+    try_run("history.py", data / "changes.json", "--data", str(data), "--workdir", str(data.parent), "--keep", str(a.keep))
+
+
 def collect(a: argparse.Namespace, data: Path) -> None:
     data.mkdir(parents=True, exist_ok=True)
     prof = ["--profile", a.profile] if a.profile else []
     stg = ["--staging-pattern", a.staging_pattern] if a.staging_pattern else []
     ov = ["--overrides", str(Path(a.overrides).resolve())] if a.overrides else []
     repos = [x for r in a.repo for x in ("--repo", str(Path(r).expanduser().resolve()))]
-    print("1/6 AWS inventory (read-only)…")
+    print("1/8 AWS inventory (read-only)…")
     run("aws_inventory.py", "--region", a.region, *prof, *stg, "--out", str(data / "aws.json"))
-    print("2/6 code map…")
+    print("2/8 code map…")
     run("code_scan.py", *repos, *(["--no-floorplan"] if a.no_floorplan else []), "--out", str(data / "code.json"))
-    print("3/6 call flows…")
+    print("3/8 call flows…")
     run("call_flow.py", str(data / "code.json"), str(data / "flows.json"))
-    print("4/6 linking code to infrastructure…")
+    print("4/8 linking code to infrastructure…")
     run("linker.py", "--aws", str(data / "aws.json"), "--code", str(data / "code.json"), *ov, "--out", str(data / "links.json"))
-    print("5/6 hourly metrics and cost…")
+    print("5/8 hourly metrics and cost…")
     run("aws_timeseries.py", "--aws", str(data / "aws.json"), *prof, "--out", str(data / "ts.json"))
-    print("6/6 health rules…")
+    print("6/8 drift: code, infrastructure files and AWS…")
+    try_run("iac_scan.py", data / "iac.json", "--code", str(data / "code.json"), "--region", a.region, "--optional", "--out", str(data / "iac.json"))
+    try_run("drift.py", data / "drift.json", "--data", str(data))
+    print("7/8 health rules…")
     run("rules.py", "--data", str(data), *ov)
+    print("8/8 snapshot and changes…")
+    snapshot(a, data)
 
 
 def design(a: argparse.Namespace, data: Path) -> None:
@@ -67,21 +90,26 @@ def design(a: argparse.Namespace, data: Path) -> None:
     data.mkdir(parents=True, exist_ok=True)
     ov = ["--overrides", str(Path(a.overrides).resolve())] if a.overrides else []
     repos = [x for r in a.repo for x in ("--repo", str(Path(r).expanduser().resolve()))]
-    print("1/5 code map…")
+    print("1/7 code map…")
     run("code_scan.py", *repos, *(["--no-floorplan"] if a.no_floorplan else []), "--out", str(data / "code.json"))
-    print("2/5 infrastructure files…")
+    print("2/7 infrastructure files…")
     run("iac_scan.py", "--code", str(data / "code.json"), "--region", a.region or "design", "--out", str(data / "aws.json"))
-    print("3/5 call flows…")
+    (data / "iac.json").unlink(missing_ok=True)  # aws.json is the files inventory now
+    print("3/7 call flows…")
     run("call_flow.py", str(data / "code.json"), str(data / "flows.json"))
-    print("4/5 linking code to infrastructure…")
+    print("4/7 linking code to infrastructure…")
     run("linker.py", "--aws", str(data / "aws.json"), "--code", str(data / "code.json"), *ov, "--out", str(data / "links.json"))
     (data / "ts.json").unlink(missing_ok=True)  # metrics from an earlier live run would not match these files
-    print("5/5 design checks…")
+    print("5/7 drift: code against infrastructure files…")
+    try_run("drift.py", data / "drift.json", "--data", str(data))
+    print("6/7 design checks…")
     run("rules.py", "--data", str(data), *ov)
+    print("7/7 snapshot and changes…")
+    snapshot(a, data)
 
 
 def build(data: Path, site: Path) -> None:
-    missing = [f for f in SITE_FILES if not (data / f).exists() and f not in ("flows.json", "ts.json")]
+    missing = [f for f in SITE_FILES if not (data / f).exists() and f not in OPTIONAL]
     if missing:
         raise SystemExit(f"missing {', '.join(missing)} in {data}: run `hopscope.py collect` first.")
     site.mkdir(parents=True, exist_ok=True)
@@ -92,6 +120,8 @@ def build(data: Path, site: Path) -> None:
     for f in SITE_FILES:
         if (data / f).exists():
             shutil.copy(data / f, site / f)
+        elif f in ("changes.json", "drift.json"):
+            (site / f).unlink(missing_ok=True)  # an earlier build's report would not describe this one
     print(f"site written to {site} (open with: hopscope.py serve)")
 
 
@@ -226,6 +256,22 @@ def ask(cmd: str, target: str | None, work: Path) -> None:
         raise SystemExit(1)
 
 
+def report(cmd: str, since: str | None, work: Path) -> None:
+    """`changes` and `drift`: readable text from changes.json / drift.json (or a diff against a named snapshot)."""
+    try:
+        data = hopscope_query.load(hopscope_text.data_dir(work))
+    except hopscope_query.NoData as e:
+        raise SystemExit(str(e)) from None
+    if cmd == "changes":
+        r = hopscope_changes.changes(data, since, work)
+        print(hopscope_changes.changes_text(r))
+    else:
+        r = hopscope_changes.drift(data)
+        print(hopscope_changes.drift_text(r))
+    if "error" in r:
+        raise SystemExit(1)
+
+
 def export(fmt: str, route: str | None, out: str | None, work: Path) -> None:
     """Mermaid architecture or route sequence, or draw.io architecture, written to --out."""
     if not out:
@@ -244,7 +290,7 @@ def export(fmt: str, route: str | None, out: str | None, work: Path) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("cmd", choices=["all", "collect", "design", "build", "review", "serve", "impact", "query", "export"])
+    ap.add_argument("cmd", choices=["all", "collect", "design", "build", "review", "serve", "impact", "query", "export", "changes", "drift"])
     ap.add_argument("target", nargs="?", help="impact: a file path; query: a route such as \"POST /orders\"")
     ap.add_argument("--region")
     ap.add_argument("--profile")
@@ -259,6 +305,8 @@ def main() -> None:
     ap.add_argument("--format", choices=["mermaid", "drawio"], default="mermaid", help="export format")
     ap.add_argument("--route", help="export: a route to draw as a sequence diagram (mermaid only)")
     ap.add_argument("--out", help="export: file to write")
+    ap.add_argument("--keep", type=int, default=30, help="snapshots to keep in <workdir>/snapshots (default 30)")
+    ap.add_argument("--since", help="changes: compare the latest build with this snapshot (a name under <workdir>/snapshots)")
     a = ap.parse_args()
     work = Path(a.workdir).expanduser().resolve()
     data, site = work / "data", work / "site"
@@ -280,6 +328,8 @@ def main() -> None:
         ask(a.cmd, a.target, work)
     if a.cmd == "export":
         export(a.format, a.route, a.out, work)
+    if a.cmd in ("changes", "drift"):
+        report(a.cmd, a.since, work)
     if a.cmd == "serve":
         serve(site, a.port, local_agent.pick_engine(a.engine, a.model))
 

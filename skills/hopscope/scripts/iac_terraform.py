@@ -192,11 +192,13 @@ def read(text: str, rel: str) -> dict:
             env = dict(re.findall(r'\{\s*"?name"?\s*[=:]\s*"([^"]+)"[\s,]*"?value"?\s*[=:]\s*"([^"]*)"', td))
             tgs = [g for lb_body in nested(b, "load_balancer") if (g := ref(lb_body, "target_group_arn", "aws_lb_target_group"))]
             part["ecs"].append(c.ecs_row(cl, name, desired=num(b, "desired_count", 1), images=images, env_vars=env, build_from=rel,
-                                         source="terraform", tgs=[tg_names.get(g, g) for g in tgs]))
+                                         source="terraform", tgs=[tg_names.get(g, g) for g in tgs],
+                                         desired_set=re.search(r"^\s*desired_count\s*=\s*\d+", top_level(b), re.M) is not None,
+                                         family=c.clean_name(attr(td, "family"), "") if td else "", name_var="${" in (attr(b, "name") or "")))
             for g in tgs:
                 tg_services.setdefault(g, []).append(f"{cl}/{name}")
         elif t == "aws_sqs_queue":
-            part["sqs"].append(c.sqs_row(c.clean_name(attr(b, "name"), label), redrive="redrive_policy" in b))
+            part["sqs"].append(c.sqs_row(c.clean_name(attr(b, "name"), label), redrive="redrive_policy" in b, name_var="${" in (attr(b, "name") or "")))
         elif t in ("aws_rds_cluster", "aws_db_instance"):
             name = c.clean_name(attr(b, "cluster_identifier") or attr(b, "identifier"), label)
             part["rds"].append(c.rds_row(name, attr(b, "engine") or "", serverless="serverlessv2_scaling_configuration" in b))

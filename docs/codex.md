@@ -56,7 +56,7 @@ The Claude Code plugin registers Hopscope's MCP server itself. In Codex, add it 
 codex mcp add hopscope -- python3 /path/to/hopscope/skills/hopscope/scripts/hopscope_mcp.py --workdir /path/to/your/project/.hopscope
 ```
 
-The tools (`impact`, `trace`, `find_routes`, `who_calls`, `what_runs`, `resources`, `health`) read the build in that folder; run a build first. The server only reads those files: no network, no AWS, no processes, no writes.
+The tools (`impact`, `trace`, `find_routes`, `who_calls`, `what_runs`, `resources`, `health`, `changes`, `drift`) read the build in that folder; run a build first. The server only reads those files: no network, no AWS, no processes, no writes.
 
 The plugin doesn't bundle the server for Codex: Codex does not fill in the plugin's install path (`${CLAUDE_PLUGIN_ROOT}`) in MCP server arguments the way Claude Code does, so the registration Claude Code uses would not start there.
 

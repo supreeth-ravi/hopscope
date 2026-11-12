@@ -20,7 +20,7 @@ MAX_STR, MAX_ITEMS, MAX_DEPTH = 300, 50, 6
 RUNS = {0: "always", 1: "conditional", 2: "on error"}
 LINK_KINDS = {0: "import", 1: "http", 2: "queue"}
 METRIC_FIELDS = ("cpu", "mem", "memMax", "conns", "credits", "creditMin", "surplus")
-FILES = ("code.json", "flows.json", "model.json", "aws.json", "links.json")
+FILES = ("code.json", "flows.json", "model.json", "aws.json", "links.json", "changes.json", "drift.json")
 
 
 class NoData(Exception):
@@ -44,7 +44,7 @@ def load(data_dir: str | Path) -> dict:
                 raise NoData(f"{name} in {d} could not be read ({type(e).__name__}); re-run hopscope.py design or all") from e
     if "code" not in out or "model" not in out:
         raise NoData(f"no Hopscope data in {d}: run hopscope.py design or all first")
-    for key in ("flows", "aws", "links"):
+    for key in ("flows", "aws", "links", "changes", "drift"):
         out.setdefault(key, {})
     out["paths"] = [str(f.get("p", "")) for f in out["code"].get("files", []) if isinstance(f, dict)]
     return out

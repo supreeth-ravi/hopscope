@@ -90,7 +90,8 @@ def read(text: str, rel: str) -> dict:
             env = {str(e["Name"]): e.get("Value", "") for d in defs for e in _list(d.get("Environment")) if isinstance(e, dict) and "Name" in e}
             tgs = [g for lb in _list(p.get("LoadBalancers")) if isinstance(lb, dict) and (g := _ref(lb.get("TargetGroupArn")))]
             part["ecs"].append(c.ecs_row(cl, name, desired=c.as_int(p.get("DesiredCount", 1), 1), images=[_image(d.get("Image")) for d in defs],
-                                         env_vars=env, build_from=rel, source="cloudformation", tgs=[tg_names.get(g, g) for g in tgs]))
+                                         env_vars=env, build_from=rel, source="cloudformation", tgs=[tg_names.get(g, g) for g in tgs],
+                                         desired_set=c.as_int(p.get("DesiredCount"), -1) >= 0, family=_name(td.get("Family"), "")))
             for g in tgs:
                 tg_services.setdefault(g, []).append(f"{cl}/{name}")
         elif t == "AWS::SQS::Queue":

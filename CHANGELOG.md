@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0 — 2026-11-12
+
+- **Snapshots and changes.** Every `all`, `collect` and `design` run copies `aws.json`, `links.json` and `model.json` into `<workdir>/snapshots/<UTC time>/` (with hashes and counts for `code.json` and `flows.json`) and writes `changes.json`: resources added, removed or changed (counts, sizes, images, task-definition revision, load balancer rules, queues, databases), links that moved, and actions that appeared or resolved. The last 30 are kept (`--keep`). `hopscope.py changes [--since <snapshot>]` prints them.
+- **Deploy history.** In live mode each ECS service records its task-definition revision and when it was registered, its current deployments, up to five earlier revisions and the last 20 service events other than "steady state" (those are counted), with ARNs reduced to names and account numbers, endpoints, IP addresses and EC2 host names masked. The IAM policy adds `ecs:ListTaskDefinitions` (read-only) for the earlier revisions; without it the current one is still recorded.
+- **Drift report.** `drift.json` and `hopscope.py drift` compare the code, the infrastructure files (now also read in live mode, into `iac.json`) and live AWS: resources in AWS but in no file, files never deployed, desired counts, images and task-definition families that differ, queues no code references, queues the code names that don't exist, settings pointing at missing queues or databases, and links that may be wrong (a file row with the service's name builds another folder). AWS and file rows match only on the same name apart from environment words and numbers, a variable prefix, or the same code folder; names that merely share words never produce a finding. Per-tenant queue families are one finding each (referenced when the code contains their static prefix), with counts. Design mode runs the code-to-files checks only.
+- **Actions.** The action queue gains up to three drift items with grouped counts, one for a deploy (or new revision) in the three hours before 5xx jumped, and up to three for services whose tasks couldn't start in the last 72 hours (placement, image pull or health-check failures).
+- **Console.** A Timeline tab: deploys and builds on one 72-hour axis next to hourly 5xx, with what changed on click; a Drift list on the Timeline and in the Components view. Design mode lists builds and drift with no time axis.
+- **MCP.** Two more read-only tools: `changes` and `drift`.
+- The Kestrel demo has deploys (shop-api revision 42 shortly before the Sunday checkout outage), three builds and a drifted Terraform file.
+
 ## 0.4.1 — 2026-11-12
 
 Fixes from running design mode on a large monorepo:

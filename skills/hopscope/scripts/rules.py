@@ -13,6 +13,9 @@ import json
 import re
 from pathlib import Path
 
+import drift
+import history
+
 THRESHOLDS = {"err_pct_critical": 5.0, "mem_critical": 85.0, "mem_warn": 75.0, "cpu_warn": 85.0, "db_pinned_hours": 12, "db_cpu_critical": 90.0,
               "single_ec2_share": 0.25, "queue_age_warn_s": 3600, "ecr_repos_warn": 200}
 EBS_GB_MONTH, IDLE_ALB_MONTH, EIP_MONTH = 0.09, 18.0, 3.6
@@ -201,6 +204,21 @@ def evaluate_design(inv: dict, links: dict) -> list[list]:
     return actions
 
 
+def extra_actions(d: Path, inv: dict, ts: dict, design: bool) -> tuple[list[list], list[list]]:
+    """(deploy actions, drift actions): a deploy right before an error jump, services whose tasks failed to start (at most three),
+    and at most three items from the drift report."""
+    first: list[list] = []
+    last: list[list] = []
+    try:
+        if not design:
+            first = history.deploy_action(inv, ts) + history.failure_actions(inv)
+        rep = json.loads((d / "drift.json").read_text()) if (d / "drift.json").exists() else {}
+        last = drift.actions(rep)
+    except (ValueError, KeyError, TypeError) as e:  # a malformed extra file must not stop the model
+        print(f"warning: drift and deploy actions skipped ({type(e).__name__})")
+    return first, last
+
+
 def examples(code: dict, flows: dict, placed: set[str]) -> list[str]:
     """Five questions worth asking: the routes with the richest real call sequences."""
     scored = []
@@ -235,6 +253,9 @@ def main() -> None:
     rows, labels = infra_entries(inv, links)
     design = inv.get("mode") == "design"
     actions, savings = (evaluate_design(inv, links), []) if design else evaluate(inv, ts, links, rows, th)
+    first, last = extra_actions(d, inv, ts, design)
+    actions = first + actions + last  # a deploy right before errors is the lead worth reading first among the warnings
+    actions.sort(key=lambda a: {"bad": 0, "warn": 1}.get(a[0], 2))
     crit = [x for x in actions if x[0] == "bad"]
     status = {"state": "bad" if crit else ("warn" if actions else "ok"),
               "headline": " · ".join(x[1] for x in crit[:2]) if crit else (("Design view: nothing critical in the files" if design else "No critical issues") if not actions else actions[0][1]),

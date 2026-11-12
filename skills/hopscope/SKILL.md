@@ -65,8 +65,8 @@ $PY <skill-dir>/scripts/hopscope.py all --region <region> --repo <path> [--repo 
     [--overrides hopscope.json] --workdir <project>/.hopscope
 ```
 
-This runs six steps (inventory, code map, call flows, linking, hourly metrics, health rules) and
-writes `<workdir>/site/`. It takes 1–5 minutes on a typical account. Individual steps that lack
+This runs eight steps (inventory, code map, call flows, linking, hourly metrics, drift, health rules,
+snapshot) and writes `<workdir>/site/`. Drift and the snapshot never stop the build; if they fail, it warns. It takes 1–5 minutes on a typical account. Individual steps that lack
 permission are skipped with a warning rather than failing the run — mention any warnings to the user.
 
 If a repo already contains a floorplan map (`floorplan/graph.json`), the code map uses its
@@ -89,8 +89,8 @@ to the wrong container, so don't skip this for links the user would act on.
 ### 5. Show it
 
 - **If the Artifact tool is available**, publish `<workdir>/site/page.html` as the page with
-  `files` mapping `code.json`, `aws.json`, `flows.json`, `ts.json` and `model.json` to the files in
-  `<workdir>/site/`, and declare `capabilities: {"sample": {}}` so the Analyst panel and "Ask" can
+  `files` mapping `code.json`, `aws.json`, `flows.json`, `ts.json`, `model.json`, and `changes.json`
+  and `drift.json` when present, to the files in `<workdir>/site/`, and declare `capabilities: {"sample": {}}` so the Analyst panel and "Ask" can
   use Claude. The page is private until the user shares it; say so.
 - **Otherwise** (Claude Code in a terminal, or Codex), run
   `$PY <skill-dir>/scripts/hopscope.py serve --workdir …` in the background and give the user
@@ -104,7 +104,10 @@ to the wrong container, so don't skip this for links the user would act on.
   If that isn't allowed, give the user the command to run in their own terminal.
 
 Then summarise in a few lines: the overall status, the top 3 actions with their fixes, and the
-largest savings. Point them at the Trace tab with one of the generated example questions.
+largest savings. Point them at the Trace tab with one of the generated example questions. If
+`hopscope.py drift` reports findings, mention the top two; if an action says errors jumped after a deploy,
+point them at the Timeline tab. Drift names are matched loosely: say a finding is likely, not certain, when
+it is marked low confidence, and don't treat the "uncertain" list as drift.
 
 ### 6. Keep it fresh (offer, don't assume)
 
@@ -122,11 +125,14 @@ re-reading the code or the account.
   run on, and the queues and workers downstream), `trace` for "what does POST /orders touch?",
   `find_routes` to get the exact route name first, `who_calls` for callers of a file or function,
   `what_runs` for the compute, queues and database behind a code folder, `resources` for the inventory,
-  and `health` for one resource's status and the actions that mention it. In Codex the server is added
+  `health` for one resource's status and the actions that mention it, `changes` for "what changed since
+  the last build / before the outage?" (each change, earlier builds, recent ECS deploys and revisions), and
+  `drift` for "does what's deployed match our Terraform and code?" (each finding with its evidence). In Codex the server is added
   by hand (see `docs/codex.md`). If a tool says there is no data, build first (`all` or `design`).
 - **Command line.** The same answers as text:
   `$PY <skill-dir>/scripts/hopscope.py impact <file> --workdir <project>/.hopscope` and
-  `$PY <skill-dir>/scripts/hopscope.py query "POST /orders" --workdir <project>/.hopscope`.
+  `$PY <skill-dir>/scripts/hopscope.py query "POST /orders" --workdir <project>/.hopscope`,
+  `hopscope.py changes [--since <snapshot>]` and `hopscope.py drift`.
 - **Diagrams for a README or a design doc.**
   `hopscope.py export --format mermaid --out arch.mmd` (architecture flowchart),
   `--format mermaid --route "POST /orders" --out orders.mmd` (sequence diagram of one route), or
@@ -155,7 +161,10 @@ routes, code paths and numbers still describe the real system. Build the demo fr
 
 ## Files
 
-- `scripts/hopscope.py` — entry point (`all`, `collect`, `design`, `build`, `review`, `serve`, `impact`, `query`, `export`)
+- `scripts/hopscope.py` — entry point (`all`, `collect`, `design`, `build`, `review`, `serve`, `impact`, `query`, `export`, `changes`, `drift`)
+- `scripts/history.py` — snapshots of every build (`<workdir>/snapshots/`, last 30) and `changes.json`
+- `scripts/drift.py`, `drift_code.py`, `drift_names.py` — drift between code, infrastructure files and AWS (`drift.json`)
+- `scripts/hopscope_changes.py` — answers about changes and drift for the CLI and MCP
 - `scripts/hopscope_query.py` — answers over a build: routes, traces, callers, change impact, resources, health
 - `scripts/hopscope_mcp.py` — MCP server (stdio) exposing those answers as tools
 - `scripts/hopscope_export.py` — Mermaid and draw.io exports

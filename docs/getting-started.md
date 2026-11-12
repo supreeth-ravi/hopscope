@@ -25,7 +25,7 @@ It will:
 
 1. Check your AWS sign-in (if it has expired, it asks you to run `aws login`).
 2. Find your repos and ask only for what it can't work out.
-3. Collect: inventory, code map, call flows, links, hourly metrics, health rules. Usually 1–5 minutes.
+3. Collect: inventory, code map, call flows, links, hourly metrics, drift, health rules, and a snapshot of the build. Usually 1–5 minutes.
 4. **Review the links.** It settles the obvious code ↔ service links itself and asks you about the genuinely ambiguous ones. Your answers go in `hopscope.json`.
 5. Publish the console (privately) in the Claude app, or serve it at `http://127.0.0.1:8765/`, where the Analyst uses the Claude Code or Codex CLI on your sign-in.
 
@@ -64,11 +64,15 @@ $PY skills/hopscope/scripts/hopscope.py query "POST /orders"
 $PY skills/hopscope/scripts/hopscope.py export --format mermaid --out architecture.mmd
 $PY skills/hopscope/scripts/hopscope.py export --format mermaid --route "POST /orders" --out orders.mmd
 $PY skills/hopscope/scripts/hopscope.py export --format drawio --out architecture.drawio
+$PY skills/hopscope/scripts/hopscope.py changes                      # since the last build; --since <snapshot> for an older one
+$PY skills/hopscope/scripts/hopscope.py drift                        # where code, infrastructure files and AWS disagree
 ```
+
+The MCP server gives the same two answers as the `changes` and `drift` tools.
 
 ## Keeping it fresh
 
-The console is a snapshot. Re-run `hopscope.py all` (with `--overrides hopscope.json`) whenever you want new numbers, or ask the agent to schedule it.
+The console is a snapshot. Re-run `hopscope.py all` (with `--overrides hopscope.json`) whenever you want new numbers, or ask the agent to schedule it. Each run keeps a copy of the inventory, links and model in `.hopscope/snapshots/` (the last 30; `--keep N` changes that) and records what changed since the run before, so regular runs build up a history that the Timeline tab and `hopscope.py changes` show.
 
 ## Removing it
 

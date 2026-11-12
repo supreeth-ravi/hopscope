@@ -58,6 +58,41 @@ def test_design_removes_a_stale_site_ts_json(tmp_path: Path) -> None:
     assert not (work / "site" / "ts.json").exists()
 
 
+def test_design_keeps_snapshots_and_reports_drift(tmp_path: Path) -> None:
+    repo, work = tmp_path / "shop", tmp_path / "work"
+    make_shop(repo)
+    (repo / "queues.tf").write_text('resource "aws_sqs_queue" "orders" { name = "orders" }\nresource "aws_sqs_queue" "audit" { name = "audit-log" }\n')
+    cmd = [sys.executable, str(SCRIPTS / "hopscope.py"), "design", "--repo", str(repo), "--workdir", str(work), "--no-floorplan"]
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)}
+    assert subprocess.run(cmd, capture_output=True, text=True, env=env).returncode == 0
+    (repo / "queues.tf").write_text('resource "aws_sqs_queue" "orders" { name = "orders" }\n')
+    res = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert len(list((work / "snapshots").iterdir())) == 2
+    ch = json.loads((work / "site" / "changes.json").read_text())
+    assert {"kind": "sqs", "name": "audit-log"} in ch["removed"]
+    drift = json.loads((work / "site" / "drift.json").read_text())
+    assert drift["mode"] == "design"
+    text = subprocess.run([sys.executable, str(SCRIPTS / "hopscope.py"), "changes", "--workdir", str(work)], capture_output=True, text=True, env=env)
+    assert text.returncode == 0 and "- sqs audit-log" in text.stdout
+    text = subprocess.run([sys.executable, str(SCRIPTS / "hopscope.py"), "drift", "--workdir", str(work)], capture_output=True, text=True, env=env)
+    assert text.returncode == 0 and text.stdout.startswith("Drift (design)")
+
+
+def test_a_failing_drift_step_does_not_stop_the_build(tmp_path: Path) -> None:
+    repo, work = tmp_path / "shop", tmp_path / "work"
+    make_shop(repo)
+    (work / "data").mkdir(parents=True)
+    (work / "data" / "drift.json").write_text("stale")
+    (work / "snapshots").write_text("not a folder")  # history cannot write here
+    res = subprocess.run([sys.executable, str(SCRIPTS / "hopscope.py"), "design", "--repo", str(repo), "--workdir", str(work), "--no-floorplan"],
+                         capture_output=True, text=True, env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)})
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "warning: history.py failed" in res.stdout
+    assert (work / "site" / "index.html").exists() and not (work / "site" / "changes.json").exists()
+    assert json.loads((work / "data" / "drift.json").read_text())["mode"] == "design"  # rewritten, not stale
+
+
 def test_design_output_never_carries_an_account_number(tmp_path: Path) -> None:
     import re
     repo, work = tmp_path / "shop", tmp_path / "work"

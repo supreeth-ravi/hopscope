@@ -12,7 +12,7 @@ Claude or Codex reads your AWS account and your code, links the two, and gives y
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757?style=flat-square)](https://code.claude.com/docs/en/overview)
 [![Codex plugin](https://img.shields.io/badge/Codex-plugin-111?style=flat-square)](docs/codex.md)
 [![Tests](https://img.shields.io/github/actions/workflow/status/supreeth-ravi/hopscope/test.yml?branch=main&style=flat-square&label=tests)](https://github.com/supreeth-ravi/hopscope/actions/workflows/test.yml)
-[![Version](https://img.shields.io/badge/version-0.4.1-111?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.5.0-111?style=flat-square)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111?style=flat-square)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-%E2%89%A53.10-111?style=flat-square)](https://www.python.org)
 [![AWS read-only](https://img.shields.io/badge/AWS-read--only-111?style=flat-square)](skills/hopscope/references/iam-policy.json)
@@ -94,6 +94,20 @@ Load balancer rules, Lambda, queues and dead-letter queues, topics, caches, sear
 
 **🔒 Read-only and private**<br>
 Only Describe/List/Get calls. Secrets are never stored, account numbers are masked, and the local server answers only to your machine.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+**🕒 What changed, on one timeline**<br>
+Every build is snapshotted and diffed against the last one. The Timeline tab puts ECS deploys (task-definition revisions and deployments) and builds on one 72-hour axis next to the hourly 5xx count, so "what changed before Sunday's outage?" is answered by eye.
+
+</td>
+<td valign="top">
+
+**🧭 Drift: code, files and AWS**<br>
+Compares the code, your Terraform/CloudFormation/compose files and the live account: resources in AWS but in no file, files never deployed, counts that differ, queues no code uses, settings pointing at queues or databases that don't exist. Each finding shows its evidence.
 
 </td>
 </tr>
@@ -200,10 +214,12 @@ Prefer the command line? See [Getting started](docs/getting-started.md#without-a
 | "What breaks if I change app/identity.py?" (MCP `impact`) | |
 | "What does POST /cart/checkout touch?" (MCP `trace`) | |
 | "Draw our architecture as Mermaid for the README" (`export`) | |
+| "What changed before the errors on Sunday?" (MCP `changes`) | Open **Timeline** and click the deploy before the spike |
+| "Is anything in AWS that isn't in our Terraform?" (MCP `drift`) | The **Drift** list under Timeline or Components |
 
 ## For agents
 
-Once a build exists, Claude Code gets Hopscope as an **MCP server** (registered by the plugin, read-only, standard-library Python). In a fresh session an agent can ask `impact("app/identity.py")` for what a change can break (dependent files, the routes whose code path reaches the file, the services they run on, the queues and workers downstream) or `trace("POST /orders")` for everything one API touches, without re-reading the code or the account. Other tools: `find_routes`, `who_calls`, `what_runs`, `resources`, `health`. Codex users add the server with one `codex mcp add` line ([Hopscope in Codex](docs/codex.md#mcp-server)).
+Once a build exists, Claude Code gets Hopscope as an **MCP server** (registered by the plugin, read-only, standard-library Python). In a fresh session an agent can ask `impact("app/identity.py")` for what a change can break (dependent files, the routes whose code path reaches the file, the services they run on, the queues and workers downstream) or `trace("POST /orders")` for everything one API touches, without re-reading the code or the account. Other tools: `find_routes`, `who_calls`, `what_runs`, `resources`, `health`, `changes` (what changed between builds, recent ECS deploys) and `drift` (where code, files and AWS disagree). Codex users add the server with one `codex mcp add` line ([Hopscope in Codex](docs/codex.md#mcp-server)).
 
 The same answers on the command line, and diagrams to paste into docs:
 
@@ -212,6 +228,8 @@ hopscope.py impact app/identity.py
 hopscope.py query "POST /orders"
 hopscope.py export --format mermaid --out architecture.mmd           # or --route "POST /orders" for a sequence diagram
 hopscope.py export --format drawio  --out architecture.drawio         # AWS icons, opens in draw.io
+hopscope.py changes                                                   # what changed since the last build (--since <snapshot> for older)
+hopscope.py drift                                                     # where code, infrastructure files and AWS disagree
 ```
 
 ## How it works
@@ -233,7 +251,7 @@ Python scripts do the collecting and linking; Claude or Codex runs them, checks 
 
 ## What it adds to your project
 
-A `.hopscope/` folder with the collected data and the built page, and optionally a `hopscope.json` with your corrections. It never changes your code or your AWS resources.
+A `.hopscope/` folder with the collected data, the built page and the last 30 build snapshots (`snapshots/`; `--keep` changes how many), and optionally a `hopscope.json` with your corrections. It never changes your code or your AWS resources.
 
 ## Privacy
 

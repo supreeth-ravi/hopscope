@@ -14,6 +14,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from awsutil import env_of, family, mask_host, metric_totals, paginate, safe_value, session
+from iac_common import mask_numbers
 
 
 def collect_sqs(s: Any, cw: Any) -> list[dict]:
@@ -40,9 +41,96 @@ def collect_lambda(s: Any, cw: Any) -> list[dict]:
              "fam": family(f["FunctionName"])} for i, f in enumerate(fns)]
 
 
+STEADY = re.compile(r"has reached a steady state", re.I)
+IPV4 = re.compile(r"(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])")
+EC2_HOST = re.compile(r"\bip-\d{1,3}-\d{1,3}-\d{1,3}-\d{1,3}(?:\.[\w-]+)*", re.I)
+AWS_HOST_TOKEN = re.compile(r"[A-Za-z0-9][\w.-]*\.amazonaws\.com")
+ARN = re.compile(r"arn:aws[\w-]*:[\w-]+:[\w-]*:\d{12}:[\w./:+=@-]+")
+MAX_DEPLOYMENTS, MAX_EVENTS, MAX_REVISIONS, MAX_REVISION_LOOKUPS = 5, 20, 5, 200
+
+
+def arn_name(arn: str) -> str:
+    """The readable name inside an ARN, without the account number: targetgroup/shop-api/abc -> shop-api."""
+    res = arn.split(":", 5)[5] if arn.count(":") >= 5 else arn
+    parts = res.split("/")
+    if parts[0] == "loadbalancer" and len(parts) >= 3:
+        return parts[2] if parts[1] in ("app", "net", "gwy") else parts[1]
+    if parts[0] == "targetgroup" and len(parts) >= 2:
+        return parts[1]
+    return parts[-1]
+
+
+def mask_text(text: Any, limit: int = 300) -> str:
+    """Free text from AWS (service events) with every ARN reduced to its name and account numbers masked."""
+    t = ARN.sub(lambda m: arn_name(m.group(0)), str(text or ""))
+    t = AWS_HOST_TOKEN.sub(lambda m: mask_host(m.group(0)), t)
+    t = IPV4.sub("<ip>", EC2_HOST.sub("<host>", t))  # private addresses and EC2 host names say nothing a reader needs
+    return mask_numbers(t)[:limit]
+
+
+def steady_events(svc: dict) -> int:
+    """ECS repeats "has reached a steady state" every few hours: counted, not kept."""
+    return sum(1 for e in svc.get("events") or [] if STEADY.search(str(e.get("message") or "")))
+
+
+def iso(t: Any) -> str:
+    return t.astimezone(timezone.utc).isoformat(timespec="seconds") if isinstance(t, datetime) else str(t or "")
+
+
+def td_name(arn: str) -> str:
+    """family:revision from a task-definition ARN."""
+    return mask_text(str(arn or "").rsplit("/", 1)[-1], 120)
+
+
+def revisions_of(ecs: Any, td: dict, cache: dict, budget: list[int]) -> list[tuple[str, Any]]:
+    """The current and up to four earlier revisions of a task-definition family, with when each was registered.
+    One ListTaskDefinitions call per family and a DescribeTaskDefinition per earlier revision, capped per run."""
+    fam = td.get("family")
+    if not fam:
+        return []
+    if fam in cache:
+        return cache[fam]
+    revs: list[tuple[str, Any]] = [(f'{fam}:{td.get("revision")}', td.get("registeredAt"))]
+    try:
+        arns = ecs.list_task_definitions(familyPrefix=fam, sort="DESC", maxResults=20).get("taskDefinitionArns", [])
+    except Exception as e:  # noqa: BLE001 - older policies lack ecs:ListTaskDefinitions; the current revision is still known
+        if not budget[1]:
+            print(f"warning: earlier task-definition revisions skipped ({type(e).__name__})")
+            budget[1] = 1
+        arns = []
+    for a in arns:
+        name = td_name(a)
+        if name.rsplit(":", 1)[0] != fam or name == revs[0][0]:
+            continue  # familyPrefix also matches longer family names
+        if len(revs) >= MAX_REVISIONS or budget[0] <= 0:
+            break
+        budget[0] -= 1
+        try:
+            revs.append((name, ecs.describe_task_definition(taskDefinition=a)["taskDefinition"].get("registeredAt")))
+        except Exception:  # noqa: BLE001, S112 - a deregistered revision can vanish between the two calls
+            continue
+    cache[fam] = revs
+    return revs
+
+
+def deploys_of(svc: dict, revisions: list[tuple[str, Any]]) -> list[dict]:
+    """Deployments, task-definition revisions and the latest service events, newest first, for the Timeline."""
+    out: list[dict] = []
+    for d in (svc.get("deployments") or [])[:MAX_DEPLOYMENTS]:
+        out.append({"kind": "deployment", "at": iso(d.get("createdAt")), "updated": iso(d.get("updatedAt")), "status": mask_text(d.get("status"), 40),
+                    "rollout": mask_text(d.get("rolloutState"), 40), "taskDef": td_name(d.get("taskDefinition", "")),
+                    "desired": d.get("desiredCount"), "running": d.get("runningCount")})
+    out += [{"kind": "revision", "at": iso(at), "taskDef": name} for name, at in revisions[:MAX_REVISIONS] if at]
+    events = [e for e in svc.get("events") or [] if not STEADY.search(str(e.get("message") or ""))]
+    out += [{"kind": "event", "at": iso(e.get("createdAt")), "msg": mask_text(e.get("message"))} for e in events[:MAX_EVENTS]]
+    return mask_numbers(sorted(out, key=lambda x: x["at"], reverse=True))  # a last pass, like iac_scan: no account number in any field
+
+
 def collect_ecs(s: Any, cw: Any, env_rx: str | None) -> list[dict]:
     ecs = s.client("ecs")
     services = []
+    families: dict[str, list] = {}
+    budget = [MAX_REVISION_LOOKUPS, 0]  # describe calls left, warned yet
     for c in paginate(ecs, "list_clusters", "clusterArns"):
         cname = c.rsplit("/", 1)[1]
         arns = paginate(ecs, "list_services", "serviceArns", cluster=c)
@@ -64,7 +152,9 @@ def collect_ecs(s: Any, cw: Any, env_rx: str | None) -> list[dict]:
                 services.append({"cluster": cname, "n": svc["serviceName"], "running": svc["runningCount"], "desired": svc["desiredCount"],
                                  "size": f"{cpu / 1024:g} vCPU · {mem / 1024:g} GB" if cpu else "", "images": images, "ownImage": own_image, "containers": names, "refs": refs,
                                  "tgs": [lb["targetGroupArn"] for lb in svc.get("loadBalancers", []) if lb.get("targetGroupArn")],
-                                 "env": env_of(f"{cname}/{svc['serviceName']}", env_rx)})
+                                 "env": env_of(f"{cname}/{svc['serviceName']}", env_rx),
+                                 "taskDef": f'{td.get("family")}:{td.get("revision")}' if td.get("family") else "", "taskDefAt": iso(td.get("registeredAt")),
+                                 "deploys": deploys_of(svc, revisions_of(ecs, td, families, budget)), "steadyEvents": steady_events(svc)})
     q = []
     for i, x in enumerate(services):
         d = {"ClusterName": x["cluster"], "ServiceName": x["n"]}

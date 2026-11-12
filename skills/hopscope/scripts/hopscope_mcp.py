@@ -9,7 +9,8 @@ stdin/stdout; logs go to stderr only. Clients asking for 2025-03-26 or 2024-11-0
 any other version gets 2025-06-18. JSON-RPC batches (arrays) are rejected, as 2025-06-18 removed them.
 
 Tools map one to one onto hopscope_query: find_routes, trace, who_calls, what_runs, impact, resources,
-health. Bad arguments and missing data come back as tool results with isError: true; unknown tools are
+health; and onto hopscope_changes: changes (what changed between builds, recent ECS deploys) and drift (where
+code, infrastructure files and AWS disagree). Bad arguments and missing data come back as tool results with isError: true; unknown tools are
 JSON-RPC error -32602 and unknown methods -32601.
 
 The workdir defaults to `.hopscope`; a relative path resolves against $CLAUDE_PROJECT_DIR when Claude Code
@@ -26,15 +27,17 @@ import sys
 from pathlib import Path
 from typing import Any, BinaryIO, Callable, Iterator
 
+import hopscope_changes
 import hopscope_query as q
 
 LATEST = "2025-06-18"
 SUPPORTED = (LATEST, "2025-03-26", "2024-11-05")
-VERSION = "0.4.1"
+VERSION = "0.5.0"
 MAX_LINE = 1_000_000  # bytes; a request longer than this is refused unread
 
 INSTRUCTIONS = ("Hopscope maps this project's code onto its AWS setup (or its compose/Terraform/CloudFormation files). "
-                "Use impact(path) before changing a file, trace(route) to see what an API touches, find_routes to find the exact route name.")
+                "Use impact(path) before changing a file, trace(route) to see what an API touches, find_routes to find the exact route name, "
+                "changes for what changed between builds and recent deploys, drift for where code, files and AWS disagree.")
 
 
 def _s(desc: str) -> dict:
@@ -77,6 +80,16 @@ TOOLS: list[dict[str, Any]] = [
      "description": "Status and note for a resource or code folder, and the action-queue items that mention it. In design mode there are no live numbers.",
      "inputSchema": {"type": "object", "properties": {"name": _s("resource name, e.g. a queue or service")},
                      "required": ["name"], "additionalProperties": False}},
+    {"name": "changes", "title": "What changed",
+     "description": "What changed between the last two builds (resources added, removed or changed, links moved, actions new or resolved), "
+                    "earlier snapshots, and recent ECS deploys and task-definition revisions. Pass since to compare with an older snapshot.",
+     "inputSchema": {"type": "object", "properties": {"since": _s("snapshot name to compare the latest build with, e.g. 20261101T060000Z")},
+                     "additionalProperties": False}},
+    {"name": "drift", "title": "Drift",
+     "description": "Where the code, the infrastructure files and AWS disagree: resources in AWS but in no file, files never deployed, "
+                    "counts or images that differ, queues nobody references, references to queues or databases that don't exist. Each finding has evidence.",
+     "inputSchema": {"type": "object", "properties": {"kind": _s("only this finding kind, e.g. aws_not_in_files, queue_unreferenced")},
+                     "additionalProperties": False}},
 ]
 for _t in TOOLS:
     _t["annotations"] = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
@@ -89,6 +102,8 @@ RUN: dict[str, Callable[[dict, dict], dict]] = {
     "impact": lambda d, a: q.impact(d, a["path"]),
     "resources": lambda d, a: q.resources(d, a.get("kind")),
     "health": lambda d, a: q.health(d, a["name"]),
+    "changes": lambda d, a: hopscope_changes.changes(d, a.get("since"), d.get("work")),
+    "drift": lambda d, a: hopscope_changes.drift(d, a.get("kind")),
 }
 BY_NAME = {t["name"]: t for t in TOOLS}
 
@@ -143,7 +158,9 @@ def call_tool(work: Path, params: dict) -> dict:
     tool = BY_NAME[params["name"]]
     try:
         args = check_args(tool, params.get("arguments") or {})
-        result = RUN[tool["name"]](q.load(data_dir(work)), args)
+        data = q.load(data_dir(work))
+        data["work"] = work  # changes(since=…) reads the snapshots next to the data
+        result = RUN[tool["name"]](data, args)
     except (BadArgs, q.NoData) as e:
         return tool_result({"error": str(e)}, True)
     except Exception as e:  # noqa: BLE001 - a malformed data file must not take the server down
